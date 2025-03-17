@@ -106,6 +106,10 @@ HeadStrategy head_strategy(int disk_id) {
     int budget = global::G;
 
     HeadStrategy strategy;
+    if (disk.request_number == 0) {
+        return strategy;
+    }
+    strategy.actions.reserve(budget);
 
     // 只考虑 PASS 和 READ 操作
     while (budget != 0) {
@@ -146,7 +150,6 @@ HeadStrategy head_strategy(int disk_id) {
                 break;
             }
         }
-        // 如果没有需要读取的块，则原地不动
     }
 
     return strategy;

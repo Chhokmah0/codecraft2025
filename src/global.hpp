@@ -48,11 +48,12 @@ void delete_object(int object_id) {
 
     // 清理硬盘上的数据
     Object& object = objects[object_id];
-    for(int i = 0; i < 3; i++) {
+    for (int i = 0; i < 3; i++) {
         Disk& disk = disks[object.disk_id[i]];
         for (int j = 1; j <= object.size; j++) {
             assert(disk.blocks[object.block_id[i][j]].object_id == object_id);
             disk.blocks[object.block_id[i][j]].object_id = 0;
+            disk.request_number -= object.get_request_number(j);
         }
         disk.empty_block_num += object.size;
     }
@@ -81,6 +82,12 @@ void simulate_head(Disk& disk, const HeadStrategy& strategy) {
 
                 ObjectBlock& block = disk.blocks[disk.head];
                 assert(block.object_id != 0);
+
+                // 在读取操作时，更新 disk 中的请求数量
+                int cnt = objects[block.object_id].get_request_number(block.block_id);
+                for (int i = 0; i < 3; i++) {
+                    disks[objects[block.object_id].disk_id[i]].request_number -= cnt;
+                }
                 auto temp_completed_requests = objects[block.object_id].read(block.block_id);
                 completed_requests.insert(completed_requests.end(), temp_completed_requests.begin(),
                                           temp_completed_requests.end());
@@ -99,6 +106,7 @@ void simulate_head(Disk& disk, const HeadStrategy& strategy) {
 
 void run() {
     std::cin >> T >> M >> N >> V >> G;
+    objects.reserve(100000);
 
     disks.resize(N + 1, Disk(V));
 
@@ -202,12 +210,16 @@ void run() {
             std::cin >> req_id >> obj_id;
             Object& object = objects[obj_id];
             object.add_request(req_id);
+            for(int i = 0 ; i < 3; i++) {
+                Disk& disk = disks[object.disk_id[i]];
+                disk.request_number += object.size;
+            }
         }
         // 模拟磁头动作
         for (int i = 1; i <= N; i++) {
             // 获取读取策略
             HeadStrategy strategy = head_strategy_function(i);
-            std::cout << strategy.to_string() << '\n';
+            std::cout << strategy << '\n';
             simulate_head(disks[i], strategy);
         }
         // 输出完成的请求

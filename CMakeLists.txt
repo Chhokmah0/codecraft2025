@@ -12,6 +12,7 @@ aux_source_directory(./                     cur_src) # 不要修改
 # 如果需要，可以使用aux_source_directory增加目录
 aux_source_directory(./src cur_src)
 include_directories(./src)
+# set(CMAKE_CXX_FLAGS "-pg -g -O3 -DNDEBUG -fno-inline")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -finline-functions -fwhole-program -ftree-vectorize -flto -funroll-loops -falign-loops -march=native -Wall -Wextra -pedantic")
 set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O0 -Wall -Wextra -pedantic")
 

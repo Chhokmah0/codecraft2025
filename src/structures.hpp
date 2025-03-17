@@ -1,10 +1,12 @@
 #pragma once
 
 #include <algorithm>
+#include <ostream>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
 
 struct ObjectWriteRequest {
     int id;
@@ -18,6 +20,66 @@ struct ObjectWriteStrategy {
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意 object 的块和硬盘上的块都是从 1
                                    // 开始编号的，block_id[0] 不使用。
 };
+
+// 磁头动作
+enum class HeadActionType {
+    JUMP,  // 跳转
+    READ,  // 读取
+    PASS,  // 跳过
+};
+
+struct HeadAction {
+    HeadActionType type;
+    int target;  // 跳转的目标，从 1 开始编号
+};
+
+struct HeadStrategy {
+    std::vector<HeadAction> actions;
+
+    void add_action(HeadActionType type, int target = 0) { actions.push_back(HeadAction{type, target}); }
+
+    friend std::ostream& operator<<(std::ostream& out, const HeadStrategy& strategy) {
+        for (const auto& action : strategy.actions) {
+            switch (action.type) {
+                case HeadActionType::JUMP:
+                    out << "j " + std::to_string(action.target);
+                    return out;
+                case HeadActionType::READ:
+                    out << 'r';
+                    break;
+                case HeadActionType::PASS:
+                    out << 'p';
+                    break;
+            }
+        }
+        out << '#';
+        return out;
+    }
+};
+
+struct ObjectBlock {
+    int object_id;  // 为 0 时表示这里没有对象
+    int block_id;
+};
+
+struct Disk {
+    HeadActionType pre_action;
+    int pre_action_cost;
+
+    int head;
+    std::vector<ObjectBlock> blocks;  // 从 1 开始编号，0 号块不使用
+    int empty_block_num;
+    int request_number;
+
+    Disk(int v)
+        : pre_action(HeadActionType::JUMP),
+          pre_action_cost(64 / 4 * 5),
+          head(1),
+          blocks(v + 1),
+          empty_block_num(v),
+          request_number(0) {}
+};
+
 
 struct ObjectReadRequest {
     int req_id;
@@ -80,57 +142,4 @@ class Object {
     }
 
     const std::unordered_map<int, ObjectReadRequest>& get_read_requests() const { return read_requests; }
-};
-
-// 磁头动作
-enum class HeadActionType {
-    JUMP,  // 跳转
-    READ,  // 读取
-    PASS,  // 跳过
-};
-
-struct HeadAction {
-    HeadActionType type;
-    int target;  // 跳转的目标，从 1 开始编号
-};
-
-struct HeadStrategy {
-    std::vector<HeadAction> actions;
-
-    void add_action(HeadActionType type, int target = 0) { actions.push_back(HeadAction{type, target}); }
-
-    std::string to_string() const {
-        std::string result;
-        for (const auto& action : actions) {
-            switch (action.type) {
-                case HeadActionType::JUMP:
-                    return "j " + std::to_string(action.target);
-                case HeadActionType::READ:
-                    result += 'r';
-                    break;
-                case HeadActionType::PASS:
-                    result += 'p';
-                    break;
-            }
-        }
-        result += '#';
-        return result;
-    }
-};
-
-struct ObjectBlock {
-    int object_id;  // 为 0 时表示这里没有对象
-    int block_id;
-};
-
-struct Disk {
-    HeadActionType pre_action;
-    int pre_action_cost;
-
-    int head;
-    std::vector<ObjectBlock> blocks;  // 从 1 开始编号，0 号块不使用
-    int empty_block_num;
-
-    Disk(int v)
-        : pre_action(HeadActionType::JUMP), pre_action_cost(64 / 4 * 5), head(1), blocks(v + 1), empty_block_num(v) {}
 };
