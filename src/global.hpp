@@ -19,7 +19,7 @@ int G;  // 每个磁头每个时间片最多消耗的令牌数
 std::function<std::vector<ObjectWriteStrategy>(const std::vector<ObjectWriteRequest>&)> write_strategy_function =
     [](const std::vector<ObjectWriteRequest>& objects) { return std::vector<ObjectWriteStrategy>(objects.size()); };
 // 返回磁头策略
-std::function<std::vector<HeadStrategy>()> head_strategy_function = []() { return std::vector<HeadStrategy>(N + 1); };
+std::function<HeadStrategy(int)> head_strategy_function = [](int) { return HeadStrategy{}; };
 // 初始化函数，在初始化时会被调用
 std::vector<std::function<void()>> init_functions;
 
@@ -39,12 +39,13 @@ void delete_object(int object_id) {
 
     // 清理硬盘上的数据
     Object& object = objects[object_id];
-    for (auto disk_id : object.disk_id) {
-        Disk& disk = disks[disk_id];
-        for (auto block_id : object.block_id[disk_id]) {
-            assert(disk.blocks[block_id].object_id == object_id);
-            disk.blocks[block_id].object_id = 0;
+    for(int i = 0; i < 3; i++) {
+        Disk& disk = disks[object.disk_id[i]];
+        for (int j = 1; j <= object.size; j++) {
+            assert(disk.blocks[object.block_id[i][j]].object_id == object_id);
+            disk.blocks[object.block_id[i][j]].object_id = 0;
         }
+        disk.empty_block_num += object.size;
     }
 
     // 清理对象，删除所有请求
@@ -132,6 +133,7 @@ void run() {
         std::cin >> event >> time;
         std::cout << event << " " << t << '\n';
         std::cout.flush();
+        assert(time == t);
 
         // 对象删除事件
         int n_delete;
@@ -176,6 +178,7 @@ void run() {
                     disk.blocks[strategy.block_id[i][j]].object_id = strategy.object.id;
                     disk.blocks[strategy.block_id[i][j]].block_id = j;
                 }
+                disk.empty_block_num -= strategy.object.size;
             }
 
             objects[strategy.object.id] = Object(strategy);
@@ -190,12 +193,12 @@ void run() {
             Object& object = objects[obj_id];
             object.add_request(req_id);
         }
-        // 获取读取策略
-        std::vector<HeadStrategy> head_strategies = head_strategy_function();
         // 模拟磁头动作
         for (int i = 1; i <= N; i++) {
-            std::cout << head_strategies[i].to_string() << '\n';
-            simulate_head(disks[i], head_strategies[i]);
+            // 获取读取策略
+            HeadStrategy strategy = head_strategy_function(i);
+            std::cout << strategy.to_string() << '\n';
+            simulate_head(disks[i], strategy);
         }
         // 输出完成的请求
         std::cout << completed_requests.size() << '\n';

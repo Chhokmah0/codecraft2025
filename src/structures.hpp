@@ -91,11 +91,13 @@ enum class HeadActionType {
 
 struct HeadAction {
     HeadActionType type;
-    int target;  // 跳转的目标或读取的目标，从 1 开始编号
+    int target;  // 跳转的目标，从 1 开始编号
 };
 
 struct HeadStrategy {
     std::vector<HeadAction> actions;
+
+    void add_action(HeadActionType type, int target = 0) { actions.push_back(HeadAction{type, target}); }
 
     std::string to_string() const {
         std::string result;
@@ -127,6 +129,8 @@ struct Disk {
 
     int head;
     std::vector<ObjectBlock> blocks;  // 从 1 开始编号，0 号块不使用
+    int empty_block_num;
 
-    Disk(int v) : pre_action(HeadActionType::JUMP), pre_action_cost(64 / 4 * 5), head(1), blocks(v + 1) {}
+    Disk(int v)
+        : pre_action(HeadActionType::JUMP), pre_action_cost(64 / 4 * 5), head(1), blocks(v + 1), empty_block_num(v) {}
 };
