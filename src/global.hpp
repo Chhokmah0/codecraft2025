@@ -34,6 +34,15 @@ std::unordered_map<int, Object> objects;  // (object_id, Object)
 std::vector<int> deleted_requests;    // 已经删除的请求
 std::vector<int> completed_requests;  // 已经完成的请求
 
+// 获取第 disk_id 上的第 block_index 个块的请求数量（从 1 开始编号）
+int get_request_number(int disk_id, int block_index) {
+    ObjectBlock object = disks[disk_id].blocks[block_index];
+    if (object.object_id == 0) {
+        return 0;
+    }
+    return objects[object.object_id].get_request_number(object.block_id);
+}
+
 void delete_object(int object_id) {
     assert(objects.count(object_id));
 
