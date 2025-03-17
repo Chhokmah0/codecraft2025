@@ -1,3 +1,9 @@
 build/
 .cache/
 data/
+*.zip
+.vscode/
+interactor/
+replay/
+code_craft
+run.py

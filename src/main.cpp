@@ -12,6 +12,7 @@ int main(int argc, char** argv) {
 
     // 往 global::init_functions 中添加初始化函数
     global::init_functions.push_back([]() {});
+    global::init_functions.push_back(baseline::init_local);
     // 设定写入策略函数
     global::write_strategy_function = baseline::write_strategy;
     // 设定磁头策略函数

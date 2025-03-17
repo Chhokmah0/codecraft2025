@@ -8,10 +8,12 @@
 
 namespace baseline {
 
-int target_disk_id = 1;
+// int target_disk_id = 1;
 std::vector<int> local_disk_empty_block_nums;
 std::vector<int> local_disk_p;
 std::mt19937 rng(0);
+
+void init_local() { local_disk_p.resize(global::N + 1, 1); }
 
 std::vector<int> put_forward(int disk_id, int size) {
     std::vector<int> block_id(size + 1);
@@ -51,11 +53,8 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
     std::vector<ObjectWriteStrategy> strategies(objects.size());
     local_disk_empty_block_nums.clear();
     local_disk_empty_block_nums.push_back(0);
-    local_disk_p.clear();
-    local_disk_p.push_back(1);
     for (int i = 1; i <= global::N; i++) {
         local_disk_empty_block_nums.push_back(global::disks[i].empty_block_num);
-        local_disk_p.push_back(global::disks[i].head);
     }
 
     std::vector<int> object_index(objects.size());
@@ -70,6 +69,7 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
         strategy.object = object;
 
         // 选定硬盘
+        int target_disk_id = (object.tag - 1) % global::N + 1;
         for (int j = 0; j < 3; j++) {
             while (local_disk_empty_block_nums[target_disk_id] < object.size) {
                 target_disk_id = target_disk_id % global::N + 1;
