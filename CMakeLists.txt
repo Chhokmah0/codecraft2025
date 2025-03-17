@@ -15,6 +15,8 @@ include_directories(./src)
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -DNDEBUG -finline-functions -fwhole-program -ftree-vectorize -flto -funroll-loops -falign-loops -march=native -Wall -Wextra -pedantic")
 set(CMAKE_CXX_FLAGS_DEBUG "-g3 -O0 -Wall -Wextra -pedantic")
 
+set(CMAKE_BUILD_TYPE "Release")
+
 add_executable(code_craft                   ${cur_src}) # ！！！不要修改 code_craft 名称，直接影响结果；可以根据语法在 ${cur_src} 后面追加
 
 # 以下可以根据需要增加需要链接的库

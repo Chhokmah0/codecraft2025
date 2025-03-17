@@ -5,7 +5,7 @@
 #include "baseline.hpp"
 
 int main(int argc, char** argv) {
-    freopen("data/sample.in", "r", stdin);
+    // freopen("data/sample_practice.in", "r", stdin);
     std::cin.tie(nullptr);
     std::cout.tie(nullptr);
     std::ios::sync_with_stdio(false);
@@ -15,7 +15,7 @@ int main(int argc, char** argv) {
     // 设定写入策略函数
     global::write_strategy_function = baseline::write_strategy;
     // 设定磁头策略函数
-    global::head_strategy_function = [](int) { return HeadStrategy{}; };
+    global::head_strategy_function = baseline::head_strategy;
     // 开始运行
     global::run();
     return 0;

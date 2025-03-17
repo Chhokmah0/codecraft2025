@@ -34,7 +34,7 @@ std::unordered_map<int, Object> objects;  // (object_id, Object)
 std::vector<int> deleted_requests;    // 已经删除的请求
 std::vector<int> completed_requests;  // 已经完成的请求
 
-// 获取第 disk_id 上的第 block_index 个块的请求数量（从 1 开始编号）
+// 获取第 disk_id 硬盘上的第 block_index 个块的请求数量（从 1 开始编号）
 int get_request_number(int disk_id, int block_index) {
     ObjectBlock object = disks[disk_id].blocks[block_index];
     if (object.object_id == 0) {
@@ -84,13 +84,13 @@ void simulate_head(Disk& disk, const HeadStrategy& strategy) {
                 auto temp_completed_requests = objects[block.object_id].read(block.block_id);
                 completed_requests.insert(completed_requests.end(), temp_completed_requests.begin(),
                                           temp_completed_requests.end());
-                disk.head = (disk.head + 1) % V;
+                disk.head = disk.head % V + 1;
                 break;
             }
             case HeadActionType::PASS: {
                 disk.pre_action = HeadActionType::PASS;
                 disk.pre_action_cost = 1;
-                disk.head = (disk.head + 1) % V;
+                disk.head = disk.head % V + 1;
                 break;
             }
         }
@@ -183,6 +183,7 @@ void run() {
             for (int i = 0; i < 3; i++) {
                 Disk& disk = disks[strategy.disk_id[i]];
                 for (int j = 1; j <= strategy.object.size; j++) {
+                    assert(1 <= strategy.block_id[i][j] && strategy.block_id[i][j] <= V);
                     assert(disk.blocks[strategy.block_id[i][j]].object_id == 0);
                     disk.blocks[strategy.block_id[i][j]].object_id = strategy.object.id;
                     disk.blocks[strategy.block_id[i][j]].block_id = j;
