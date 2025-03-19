@@ -69,7 +69,7 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
         strategy.object = object;
 
         // 选定硬盘
-        int target_disk_id = (object.tag - 1) % global::N + 1;
+        int target_disk_id = ((object.tag - 1) / 3 * 3) % global::N + 1;
         for (int j = 0; j < 3; j++) {
             while (local_disk_empty_block_nums[target_disk_id] < object.size) {
                 target_disk_id = target_disk_id % global::N + 1;
@@ -106,7 +106,7 @@ HeadStrategy head_strategy(int disk_id) {
     int budget = global::G;
 
     HeadStrategy strategy;
-    if (disk.request_number == 0) {
+    if (disk.query.empty()) {
         return strategy;
     }
     strategy.actions.reserve(budget);

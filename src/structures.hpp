@@ -1,12 +1,15 @@
 #pragma once
 
 #include <algorithm>
+#include <cstdint>
+#include <iterator>
+#include <map>
 #include <ostream>
+#include <set>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
 
 struct ObjectWriteRequest {
     int id;
@@ -59,7 +62,16 @@ struct HeadStrategy {
 
 struct ObjectBlock {
     int object_id;  // 为 0 时表示这里没有对象
-    int block_id;
+    int block_index;
+};
+
+struct Range {
+    int l;
+    int r;
+
+    bool operator<(const Range& rth) const {
+        return l < rth.l;
+    }
 };
 
 struct Disk {
@@ -69,17 +81,51 @@ struct Disk {
     int head;
     std::vector<ObjectBlock> blocks;  // 从 1 开始编号，0 号块不使用
     int empty_block_num;
-    int request_number;
+
+    std::set<Range> empty_range;  // 空余的连续块
+    std::set<int> used;           // 被使用的块
+    std::map<int, int> query;     // 拥有查询的块，(index, last_query_time)
 
     Disk(int v)
-        : pre_action(HeadActionType::JUMP),
-          pre_action_cost(64 / 4 * 5),
-          head(1),
-          blocks(v + 1),
-          empty_block_num(v),
-          request_number(0) {}
-};
+        : pre_action(HeadActionType::JUMP), pre_action_cost(64 / 4 * 5), head(1), blocks(v + 1), empty_block_num(v) {
+        empty_range.insert(Range{1, v});
+    }
 
+    void use(int index) {
+        used.insert(index);
+        auto it = empty_range.upper_bound(Range{index, INT32_MAX});
+        it--;
+        Range range = *it;
+        empty_range.erase(it);
+        if (range.l <= index - 1) {
+            empty_range.insert(Range{range.l, index - 1});
+        }
+        if (index + 1 <= range.r) {
+            empty_range.insert(Range{index + 1, range.r});
+        }
+    }
+
+    void unuse(int index) {
+        used.erase(index);
+        auto it = empty_range.lower_bound(Range{index, 0});
+        int r = index;
+        if (it != empty_range.end() && it->l == index + 1) {
+            r = it->r;
+        }
+        int l = index;
+        if (it != empty_range.begin() && std::prev(it)->r == index - 1) {
+            l = std::prev(it)->l;
+        }
+        if (l != index) {
+            empty_range.erase(std::prev(it));
+        }
+        if (r != index) {
+            empty_range.erase(it);
+        }
+
+        empty_range.insert(Range{l, r});
+    }
+};
 
 struct ObjectReadRequest {
     int req_id;

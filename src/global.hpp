@@ -1,7 +1,10 @@
 #pragma once
+#include <algorithm>
 #include <cassert>
 #include <functional>
 #include <iostream>
+#include <numeric>
+#include <random>
 #include <unordered_map>
 #include <vector>
 
@@ -23,11 +26,14 @@ std::function<HeadStrategy(int)> head_strategy_function = [](int) { return HeadS
 // 初始化函数，在初始化时会被调用
 std::vector<std::function<void()>> init_functions;
 
+std::mt19937 rng;
+
 // fre_xxx[i][j] 表示相应时间片内对象标签为 i 的读取、写入、删除操作的对象大小之和。
 // i 和 j 从 1 开始编号
 std::vector<std::vector<int>> fre_del, fre_write, fre_read;
 int fre_len;
 
+int timestamp;                            // 全局时间戳
 std::vector<Disk> disks;                  // 从 1 开始编号
 std::unordered_map<int, Object> objects;  // (object_id, Object)
 
@@ -40,7 +46,16 @@ int get_request_number(int disk_id, int block_index) {
     if (object.object_id == 0) {
         return 0;
     }
-    return objects[object.object_id].get_request_number(object.block_id);
+    return objects[object.object_id].get_request_number(object.block_index);
+}
+
+// 获取硬盘上的第 block_index 个块的请求数量（从 1 开始编号）
+int get_request_number(const Disk& disk, int block_index) {
+    ObjectBlock object = disk.blocks[block_index];
+    if (object.object_id == 0) {
+        return 0;
+    }
+    return objects[object.object_id].get_request_number(object.block_index);
 }
 
 void delete_object(int object_id) {
@@ -52,8 +67,12 @@ void delete_object(int object_id) {
         Disk& disk = disks[object.disk_id[i]];
         for (int j = 1; j <= object.size; j++) {
             assert(disk.blocks[object.block_id[i][j]].object_id == object_id);
+
             disk.blocks[object.block_id[i][j]].object_id = 0;
-            disk.request_number -= object.get_request_number(j);
+            disk.unuse(object.block_id[i][j]);
+            if (disk.query.count(object.block_id[i][j])) {
+                disk.query.erase(object.block_id[i][j]);
+            }
         }
         disk.empty_block_num += object.size;
     }
@@ -82,13 +101,16 @@ void simulate_head(Disk& disk, const HeadStrategy& strategy) {
 
                 ObjectBlock& block = disk.blocks[disk.head];
                 assert(block.object_id != 0);
+                Object& object = objects[block.object_id];
+                for (int i = 0; i < 3; i++) {
+                    Disk& t_disk = disks[object.disk_id[i]];
+                    if (t_disk.query.count(object.block_id[i][block.block_index])) {
+                        t_disk.query.erase(object.block_id[i][block.block_index]);
+                    }
+                }
 
                 // 在读取操作时，更新 disk 中的请求数量
-                int cnt = objects[block.object_id].get_request_number(block.block_id);
-                for (int i = 0; i < 3; i++) {
-                    disks[objects[block.object_id].disk_id[i]].request_number -= cnt;
-                }
-                auto temp_completed_requests = objects[block.object_id].read(block.block_id);
+                auto temp_completed_requests = objects[block.object_id].read(block.block_index);
                 completed_requests.insert(completed_requests.end(), temp_completed_requests.begin(),
                                           temp_completed_requests.end());
                 disk.head = disk.head % V + 1;
@@ -143,14 +165,14 @@ void run() {
     std::cout.flush();
 
     // 开始模拟
-    for (int t = 1; t <= T + 105; t++) {
+    for (timestamp = 1; timestamp <= T + 105; timestamp++) {
         // 时间片对齐事件
         std::string event;
         int time;
         std::cin >> event >> time;
-        std::cout << event << " " << t << '\n';
+        std::cout << event << " " << timestamp << '\n';
         std::cout.flush();
-        assert(time == t);
+        assert(time == timestamp);
 
         // 对象删除事件
         int n_delete;
@@ -174,9 +196,9 @@ void run() {
         for (int i = 0; i < n_write; i++) {
             std::cin >> write_objects[i].id >> write_objects[i].size >> write_objects[i].tag;
         }
-        std::vector<ObjectWriteStrategy> strategies = write_strategy_function(write_objects);
+        std::vector<ObjectWriteStrategy> write_strategies = write_strategy_function(write_objects);
         // 输出策略
-        for (auto& strategy : strategies) {
+        for (auto& strategy : write_strategies) {
             std::cout << strategy.object.id << '\n';
             for (int i = 0; i < 3; i++) {
                 std::cout << strategy.disk_id[i] << " ";
@@ -187,14 +209,15 @@ void run() {
         }
         std::cout.flush();
         // 检查策略是否合法，根据策略更新状态
-        for (auto& strategy : strategies) {
+        for (auto& strategy : write_strategies) {
             for (int i = 0; i < 3; i++) {
                 Disk& disk = disks[strategy.disk_id[i]];
                 for (int j = 1; j <= strategy.object.size; j++) {
                     assert(1 <= strategy.block_id[i][j] && strategy.block_id[i][j] <= V);
                     assert(disk.blocks[strategy.block_id[i][j]].object_id == 0);
                     disk.blocks[strategy.block_id[i][j]].object_id = strategy.object.id;
-                    disk.blocks[strategy.block_id[i][j]].block_id = j;
+                    disk.blocks[strategy.block_id[i][j]].block_index = j;
+                    disk.use(strategy.block_id[i][j]);
                 }
                 disk.empty_block_num -= strategy.object.size;
             }
@@ -210,17 +233,27 @@ void run() {
             std::cin >> req_id >> obj_id;
             Object& object = objects[obj_id];
             object.add_request(req_id);
-            for(int i = 0 ; i < 3; i++) {
-                Disk& disk = disks[object.disk_id[i]];
-                disk.request_number += object.size;
+            // 更新到磁盘上
+            for (int j = 0; j < 3; j++) {
+                Disk& disk = disks[object.disk_id[j]];
+                for (int k = 1; k <= object.size; k++) {
+                    disk.query[object.block_id[j][k]] = timestamp;
+                }
             }
         }
+        // 尝试随机化
+        std::vector<HeadStrategy> head_strategies(N + 1);
+        std::vector<int> index(N + 1);
+        std::iota(index.begin(), index.end(), 0);
+        std::shuffle(index.begin() + 1, index.end(), rng);
         // 模拟磁头动作
         for (int i = 1; i <= N; i++) {
             // 获取读取策略
-            HeadStrategy strategy = head_strategy_function(i);
-            std::cout << strategy << '\n';
-            simulate_head(disks[i], strategy);
+            head_strategies[index[i]] = head_strategy_function(index[i]);
+            simulate_head(disks[index[i]], head_strategies[index[i]]);
+        }
+        for (int i = 1; i <= N; i++) {
+            std::cout << head_strategies[i] << '\n';
         }
         // 输出完成的请求
         std::cout << completed_requests.size() << '\n';
@@ -229,6 +262,16 @@ void run() {
         }
         completed_requests.clear();
         std::cout.flush();
+
+        // check
+        for (int i = 1; i <= N; i++) {
+            Disk& disk = disks[i];
+            if (disk.used.empty()) {
+                assert(disk.empty_range.size() == 1);
+                assert(disk.empty_range.begin()->l == 1);
+                assert(disk.empty_range.begin()->r == V);
+            }
+        }
     }
 }
 
