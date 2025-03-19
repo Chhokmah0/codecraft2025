@@ -67,7 +67,7 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
         ObjectWriteStrategy& strategy = strategies[object_index[i]];
 
         strategy.object = object;
-
+        
         // 选定硬盘
         int target_disk_id = (object.tag - 1) % global::N + 1;
         for (int j = 0; j < 3; j++) {
@@ -92,7 +92,28 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
         }
 
         // 随机打乱第三个硬盘上的顺序
-        std::shuffle(strategy.block_id[2].begin() + 1, strategy.block_id[2].end(), rng);
+        //tmp[i]是第i个盘放哪个对象块
+        std::vector<int> tmp(object.size+1);
+        int pl,pr;int ps=0;
+        if (strategy.block_id[2].size() % 2 == 0){
+            pl = strategy.block_id[2].size() / 2 -1;
+            pr = strategy.block_id[2].size() / 2 +1;
+            tmp[pl+1]=strategy.block_id[2][++ps];
+        }
+        else{
+            pl = strategy.block_id[2].size() / 2;
+            pr = strategy.block_id[2].size() / 2 +1;
+        }
+        while (pl >= 1 && pr < strategy.block_id[2].size()){
+            tmp[pl]=strategy.block_id[2][++ps];
+            tmp[pr]=strategy.block_id[2][++ps];
+            pl--;
+            pr++;
+        }
+        assert(pl==0);
+        assert(pr==strategy.block_id[2].size());
+        strategy.block_id[2] = tmp;
+        //std::shuffle(strategy.block_id[2].begin() + 1, strategy.block_id[2].end(), rng);
     }
 
     return strategies;
