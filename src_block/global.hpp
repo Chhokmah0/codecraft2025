@@ -81,6 +81,13 @@ void delete_object(int object_id) {
     for (const auto& [req_id, request] : object.get_read_requests()) {
         deleted_requests.push_back(req_id);
     }
+    for (int i = 0; i < 3; i++) {
+        Disk& disk = disks[object.disk_id[i]];
+        for (int j = 1; j <= object.size; j++) {
+            disk.request_block_sum[(object.block_id[i][j] + disk.part - 1) / disk.part] -= disk.request_sum[object.block_id[i][j]];
+            disk.request_sum[object.block_id[i][j]] = 0;
+        }
+    }
     objects.erase(object_id);
 }
 
@@ -106,6 +113,8 @@ void simulate_head(Disk& disk, const HeadStrategy& strategy) {
                     Disk& t_disk = disks[object.disk_id[i]];
                     if (t_disk.query.count(object.block_id[i][block.block_index])) {
                         t_disk.query.erase(object.block_id[i][block.block_index]);
+                        t_disk.request_block_sum[(object.block_id[i][block.block_index] + t_disk.part - 1) / t_disk.part] -= t_disk.request_sum[object.block_id[i][block.block_index]];
+                        t_disk.request_sum[object.block_id[i][block.block_index]] = 0;
                     }
                 }
 
@@ -238,6 +247,8 @@ void run() {
                 Disk& disk = disks[object.disk_id[j]];
                 for (int k = 1; k <= object.size; k++) {
                     disk.query[object.block_id[j][k]] = timestamp;
+                    disk.request_sum[object.block_id[j][k]]++;
+                    disk.request_block_sum[(object.block_id[j][k] + disk.part - 1) / disk.part]++;
                 }
             }
         }
