@@ -217,7 +217,7 @@ void run() {
                     assert(disk.blocks[strategy.block_id[i][j]].object_id == strategy.object.id);
                     disk.blocks[strategy.block_id[i][j]].object_id = strategy.object.id;
                     disk.blocks[strategy.block_id[i][j]].block_index = j;
-                    disk.use(strategy.block_id[i][j], strategy.object.tag);
+                    // disk.use(strategy.block_id[i][j], strategy.object.tag);
                 }
                 disk.empty_block_num -= strategy.object.size;
             }

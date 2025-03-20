@@ -15,7 +15,7 @@ std::mt19937 rng(0);
 
 void init_local() { local_disk_p.resize(global::N + 1, 1); }
 
-std::vector<int> put_forward(int disk_id, int size, int start_pos, int object_id) {
+std::vector<int> put_forward(int disk_id, int size, int start_pos, int object_id, int object_tag) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
     int& p = start_pos;
@@ -24,16 +24,18 @@ std::vector<int> put_forward(int disk_id, int size, int start_pos, int object_id
             p = p % global::V + 1;
         }
         global::disks[disk_id].blocks[p].object_id = object_id;
+        global::disks[disk_id].use(p, object_tag);
         block_id[i] = p;
         p = p % global::V + 1;
     }
     for (int i = 1; i <= size; i++) {
         assert(block_id[i] != 0);
     }
+
     return block_id;
 }
 
-std::vector<int> put_back(int disk_id, int size, int start_pos, int object_id) {
+std::vector<int> put_back(int disk_id, int size, int start_pos, int object_id, int object_tag) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
     int& p = start_pos;
@@ -42,6 +44,7 @@ std::vector<int> put_back(int disk_id, int size, int start_pos, int object_id) {
             p = (p - 2 + global::V) % global::V + 1;
         }
         global::disks[disk_id].blocks[p].object_id = object_id;
+        global::disks[disk_id].use(p, object_tag);
         block_id[i] = p;
         p = (p - 2 + global::V) % global::V + 1;
     }
@@ -56,11 +59,9 @@ int find_disk(std::vector<std::pair<int, std::pair<int, int>>> disk_block, int s
         int start_pos = v.first, id = v.second;
         int nxt_status = global::disks[disk_id].used_id[id];
         if (global::disks[disk_id].empty_block_size[id] >= size) {
-            if (now == -1)
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag))
                 now = disk_id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
-            else if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag))
-                now = disk_id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
-            else if (global::disks[disk_id].empty_block_size[id] > lst_size)
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag) && global::disks[disk_id].empty_block_size[id] > lst_size)
                 now = disk_id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
         }
     }
@@ -69,11 +70,9 @@ int find_disk(std::vector<std::pair<int, std::pair<int, int>>> disk_block, int s
         int start_pos = v.first, id = v.second;
         int nxt_status = global::disks[disk_id].used_id[id];
         if (global::disks[disk_id].empty_block_size[id] >= size) {
-            if (now == -1)
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
                 now = disk_id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
-            else if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
-                now = disk_id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
-            else if (global::disks[disk_id].empty_block_size[id] > lst_size)
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && global::disks[disk_id].empty_block_size[id] > lst_size)
                 now = disk_id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
         }
     }
@@ -81,24 +80,26 @@ int find_disk(std::vector<std::pair<int, std::pair<int, int>>> disk_block, int s
 }
 int find_block(int disk_id, int size, int tag) {
     const Disk& disk = global::disks[disk_id];
-    int now = -1, now_status = 2147483647, res = -1;
+    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
     for (auto [start_pos, id] : disk.div_blocks_id) {
         int nxt_status = disk.used_id[id];
         if (disk.empty_block_size[id] >= size) {
-            if (now == -1)
-                now = id, now_status = nxt_status, res = start_pos;
-            else if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag))
-                now = id, now_status = nxt_status, res = start_pos;
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag))
+                now = id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag) && global::disks[disk_id].empty_block_size[id] > lst_size)
+                now = id,
+                now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
         }
     }
     if (res != -1) return res;
     for (auto [start_pos, id] : disk.div_blocks_id) {
         int nxt_status = disk.used_id[id];
         if (disk.empty_block_size[id] >= size) {
-            if (now == -1)
-                now = id, now_status = nxt_status, res = start_pos;
-            else if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
-                now = id, now_status = nxt_status, res = start_pos;
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
+                now = id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && global::disks[disk_id].empty_block_size[id] > lst_size)
+                now = id,
+                now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
         }
     }
     return res;
@@ -128,7 +129,8 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
                 disk_block.push_back({disk_id, {start_pos, id}});
             }
         }
-        // 把所有硬盘都放进去
+        // std::shuffle(disk_block.begin(), disk_block.end(), rng);
+        //  把所有硬盘都放进去
         for (int j = 0; j < 3; j++) {
             int target_disk_id = find_disk(disk_block, object.size, object.tag);
             assert(target_disk_id != -1);
@@ -144,9 +146,9 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
             int start_pos = find_block(strategy.disk_id[j], object.size, object.tag);
             // 选定块，根据硬盘的奇偶性质确定放置方向
             if (strategy.disk_id[j] % 2 == 1) {
-                strategy.block_id[j] = put_forward(strategy.disk_id[j], object.size, start_pos == -1 ? local_disk_p[strategy.disk_id[j]] : start_pos, strategy.object.id);
+                strategy.block_id[j] = put_forward(strategy.disk_id[j], object.size, start_pos == -1 ? local_disk_p[strategy.disk_id[j]] : start_pos, strategy.object.id, strategy.object.tag);
             } else {
-                strategy.block_id[j] = put_back(strategy.disk_id[j], object.size, start_pos == -1 ? local_disk_p[strategy.disk_id[j]] : std::min(start_pos + global::disks[target_disk_id].part - 1, global::V), strategy.object.id);
+                strategy.block_id[j] = put_back(strategy.disk_id[j], object.size, start_pos == -1 ? local_disk_p[strategy.disk_id[j]] : std::min(start_pos + global::disks[target_disk_id].part - 1, global::V), strategy.object.id, strategy.object.tag);
             }
         }
 
@@ -198,7 +200,7 @@ HeadStrategy head_strategy(int disk_id) {
 
     // 只考虑 PASS 和 READ 操作
     while (budget != 0) {
-        if (global::get_request_number(disk_id, head) != 0 && global::timestamp - global::disks[disk_id].query[head] <= 24) {
+        if (global::get_request_number(disk_id, head) != 0 && global::timestamp - global::disks[disk_id].query[head] <= 70) {
             auto cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
             if (budget >= cost) {
                 strategy.add_action(HeadActionType::READ);
@@ -230,7 +232,7 @@ HeadStrategy head_strategy(int disk_id) {
         strategy.actions.clear();
         // 跳转到下一个需要读取的块
         for (int head = (disk.head + 1) % global::V; head != disk.head; head = (head + 1) % global::V) {
-            if (global::get_request_number(disk_id, head) != 0 && global::timestamp - global::disks[disk_id].query[head] <= 24) {
+            if (global::get_request_number(disk_id, head) != 0 && global::timestamp - global::disks[disk_id].query[head] <= 70) {
                 strategy.add_action(HeadActionType::JUMP, head);
                 break;
             }
