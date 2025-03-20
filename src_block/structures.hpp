@@ -85,7 +85,7 @@ struct Disk {
     std::vector<int> empty_block_size;               // 每个块中空余大小
     std::vector<std::vector<int>> used_id_cnt;       // 每个块里面，用到的种类的个数
     int empty_block_num;
-    int part = 1024;               // 每x长度分一个块
+    int part = 2048;               // 每x长度分一个块
     std::set<Range> empty_range;  // 空余的连续块
     std::set<int> used;           // 被使用的块
     std::map<int, int> query;     // 拥有查询的块，(index, last_query_time)

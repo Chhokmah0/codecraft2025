@@ -122,17 +122,43 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
         ObjectWriteStrategy& strategy = strategies[object_index[i]];
 
         strategy.object = object;
-        std::vector<std::pair<int, std::pair<int, int>>> disk_block;
-        for (int disk_id = 1; disk_id <= global::N; ++disk_id) {
-            const Disk& disk = global::disks[disk_id];
-            for (auto [start_pos, id] : disk.div_blocks_id) {
-                disk_block.push_back({disk_id, {start_pos, id}});
-            }
-        }
+        //std::vector<std::pair<int, std::pair<int, int>>> disk_block;
+        // for (int disk_id = 1; disk_id <= global::N; ++disk_id) {
+        //     const Disk& disk = global::disks[disk_id];
+        //     int empty_block_num = 0;
+        //     for (auto [start_pos, id] : disk.div_blocks_id) {
+        //         int status = disk.used_id[id];
+        //         if (status == 0) empty_block_num++;
+        //         disk_block.push_back({disk_id, {start_pos, id}});
+        //     }
+        // }
         // std::shuffle(disk_block.begin(), disk_block.end(), rng);
         //  把所有硬盘都放进去
+        std::vector<int> vs_disk(global::N + 1,0);
         for (int j = 0; j < 3; j++) {
+            std::vector<std::pair<int, std::pair<int, int>>> disk_block;
+            int min_block_num=0;
+            for (int disk_id = 1; disk_id <= global::N; ++disk_id) if(vs_disk[disk_id]==0){
+                const Disk& disk = global::disks[disk_id];
+                int empty_block_num = 0;
+                for (auto [start_pos, id] : disk.div_blocks_id) {
+                    int status = disk.used_id[id];
+                    if (status == 0) empty_block_num++;
+                }
+                if(empty_block_num>min_block_num){
+                    min_block_num=empty_block_num;
+                    disk_block.clear();
+                }
+                if(empty_block_num == min_block_num){
+                    for (auto [start_pos, id] : disk.div_blocks_id) {
+                        int status = disk.used_id[id];
+                        disk_block.push_back({disk_id, {start_pos, id}});
+                    }
+                }
+            }           
+            std::shuffle(disk_block.begin(), disk_block.end(), rng);
             int target_disk_id = find_disk(disk_block, object.size, object.tag);
+            vs_disk[target_disk_id]=1;
             assert(target_disk_id != -1);
             strategy.disk_id[j] = target_disk_id;
             std::vector<std::pair<int, std::pair<int, int>>> new_disk_block;
@@ -145,40 +171,40 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
             local_disk_empty_block_nums[strategy.disk_id[j]] -= object.size;
             int start_pos = find_block(strategy.disk_id[j], object.size, object.tag);
             // 选定块，根据硬盘的奇偶性质确定放置方向
-            if (strategy.disk_id[j] % 2 == 1) {
-                strategy.block_id[j] = put_forward(strategy.disk_id[j], object.size, start_pos == -1 ? local_disk_p[strategy.disk_id[j]] : start_pos, strategy.object.id, strategy.object.tag);
-            } else {
-                strategy.block_id[j] = put_back(strategy.disk_id[j], object.size, start_pos == -1 ? local_disk_p[strategy.disk_id[j]] : std::min(start_pos + global::disks[target_disk_id].part - 1, global::V), strategy.object.id, strategy.object.tag);
-            }
+            //if (strategy.disk_id[j] % 2 == 1) {
+            strategy.block_id[j] = put_forward(strategy.disk_id[j], object.size, start_pos == -1 ? local_disk_p[strategy.disk_id[j]] : start_pos, strategy.object.id, strategy.object.tag);
+            // } else {
+            //     strategy.block_id[j] = put_back(strategy.disk_id[j], object.size, start_pos == -1 ? local_disk_p[strategy.disk_id[j]] : std::min(start_pos + global::disks[target_disk_id].part - 1, global::V), strategy.object.id, strategy.object.tag);
+            // }
         }
 
         // 保证第二个硬盘上的顺序和第一个硬盘上不一样（put_back 本身就会反向放置）
-        if (strategy.disk_id[1] % 2 == strategy.disk_id[0] % 2) {
-            std::reverse(strategy.block_id[1].begin() + 1, strategy.block_id[1].end());
-        }
+        // if (strategy.disk_id[1] % 2 == strategy.disk_id[0] % 2) {
+        //     std::reverse(strategy.block_id[1].begin() + 1, strategy.block_id[1].end());
+        // }
 
         // 随机打乱第三个硬盘上的顺序
         // tmp[i]是第i个盘放哪个对象块
-        std::vector<int> tmp(object.size + 1);
-        int pl, pr;
-        int ps = 0;
-        if (strategy.block_id[2].size() % 2 == 0) {
-            pl = strategy.block_id[2].size() / 2 - 1;
-            pr = strategy.block_id[2].size() / 2 + 1;
-            tmp[pl + 1] = strategy.block_id[2][++ps];
-        } else {
-            pl = strategy.block_id[2].size() / 2;
-            pr = strategy.block_id[2].size() / 2 + 1;
-        }
-        while (pl >= 1 && pr < strategy.block_id[2].size()) {
-            tmp[pl] = strategy.block_id[2][++ps];
-            tmp[pr] = strategy.block_id[2][++ps];
-            pl--;
-            pr++;
-        }
-        assert(pl == 0);
-        assert(pr == strategy.block_id[2].size());
-        strategy.block_id[2] = tmp;
+        // std::vector<int> tmp(object.size + 1);
+        // int pl, pr;
+        // int ps = 0;
+        // if (strategy.block_id[2].size() % 2 == 0) {
+        //     pl = strategy.block_id[2].size() / 2 - 1;
+        //     pr = strategy.block_id[2].size() / 2 + 1;
+        //     tmp[pl + 1] = strategy.block_id[2][++ps];
+        // } else {
+        //     pl = strategy.block_id[2].size() / 2;
+        //     pr = strategy.block_id[2].size() / 2 + 1;
+        // }
+        // while (pl >= 1 && pr < strategy.block_id[2].size()) {
+        //     tmp[pl] = strategy.block_id[2][++ps];
+        //     tmp[pr] = strategy.block_id[2][++ps];
+        //     pl--;
+        //     pr++;
+        // }
+        // assert(pl == 0);
+        // assert(pr == strategy.block_id[2].size());
+        // strategy.block_id[2] = tmp;
         // std::shuffle(strategy.block_id[2].begin() + 1, strategy.block_id[2].end(), rng);
     }
 
