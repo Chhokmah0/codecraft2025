@@ -54,7 +54,7 @@ std::vector<int> put_back(int disk_id, int size, int start_pos, int object_id, i
     return block_id;
 }
 // 根据tag找到一个满足条件的硬盘
-int find_disk(std::vector<std::pair<int, std::pair<int, int>>> disk_block, int size, int tag) {
+int find_disk1(const std::vector<std::pair<int, std::pair<int, int>>>& disk_block, int size, int tag) {
     int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
     for (auto [disk_id, v] : disk_block) {
         int start_pos = v.first, id = v.second;
@@ -66,7 +66,22 @@ int find_disk(std::vector<std::pair<int, std::pair<int, int>>> disk_block, int s
                 now = disk_id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
         }
     }
-    if (now != -1) return now;
+    // if (now != -1) return now;
+    // for (auto [disk_id, v] : disk_block) {
+    //     int start_pos = v.first, id = v.second;
+    //     int nxt_status = global::disks[disk_id].used_id[id];
+    //     if (global::disks[disk_id].empty_block_size[id] >= size) {
+    //         if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
+    //             now = disk_id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
+    //         else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && global::disks[disk_id].empty_block_size[id] > lst_size)
+    //             now = disk_id, now_status = nxt_status, res = start_pos, lst_size = global::disks[disk_id].empty_block_size[id];
+    //     }
+    // }
+    return now;
+}
+int find_disk2(const std::vector<std::pair<int, std::pair<int, int>>>& disk_block, int size, int tag) {
+    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
+    // if (now != -1) return now;
     for (auto [disk_id, v] : disk_block) {
         int start_pos = v.first, id = v.second;
         int nxt_status = global::disks[disk_id].used_id[id];
@@ -128,39 +143,45 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
         std::vector<int> vs_disk(global::N + 1, 0);
         for (int j = 0; j < 3; j++) {
             std::vector<std::pair<int, std::pair<int, int>>> disk_block;
-            int min_block_num = 0;
             for (int disk_id = 1; disk_id <= global::N; ++disk_id)
                 if (vs_disk[disk_id] == 0) {
                     const Disk& disk = global::disks[disk_id];
-                    int empty_block_num = 0;
                     for (auto [start_pos, id] : disk.div_blocks_id) {
                         int status = disk.used_id[id];
-                        if (status == 0) empty_block_num++;
-                    }
-                    if (empty_block_num > min_block_num) {
-                        min_block_num = empty_block_num;
-                        disk_block.clear();
-                    }
-                    if (empty_block_num == min_block_num) {
-                        for (auto [start_pos, id] : disk.div_blocks_id) {
-                            int status = disk.used_id[id];
-                            disk_block.push_back({disk_id, {start_pos, id}});
-                        }
+                        disk_block.push_back({disk_id, {start_pos, id}});
                     }
                 }
-            // 优先空的块尽可能多的盘
             std::shuffle(disk_block.begin(), disk_block.end(), rng);
-            int target_disk_id = find_disk(disk_block, object.size, object.tag);
+            int target_disk_id = find_disk1(disk_block, object.size, object.tag);
+            if(target_disk_id == -1){
+                int max_block_num = 0;
+                std::vector<int> disk_list;
+                for (int disk_id = 1; disk_id <= global::N; ++disk_id)
+                    if (vs_disk[disk_id] == 0) {
+                        const Disk& disk = global::disks[disk_id];
+                        int empty_block_num = 0;
+                        for (auto [start_pos, id] : disk.div_blocks_id) {
+                            int status = disk.used_id[id];
+                            if (status == 0) empty_block_num++;
+                        }
+                        if (empty_block_num > max_block_num) {
+                            max_block_num = empty_block_num;
+                            disk_list.clear();
+                        }
+                        if (empty_block_num == max_block_num) {
+                            disk_list.push_back(disk_id);
+                        }
+                    }
+                // 优先空的块尽可能多的盘
+                //std::shuffle(disk_block.begin(), disk_block.end(), rng);
+                if(max_block_num > 0)
+                target_disk_id = disk_list[(long long)rng() % disk_list.size()];
+                else
+                target_disk_id = find_disk2(disk_block, object.size, object.tag);
+            }
             vs_disk[target_disk_id] = 1;
             assert(target_disk_id != -1);
             strategy.disk_id[j] = target_disk_id;
-            std::vector<std::pair<int, std::pair<int, int>>> new_disk_block;
-            for (auto [disk_id, t] : disk_block) {
-                if (target_disk_id != disk_id) {
-                    new_disk_block.push_back({disk_id, t});
-                }
-            }
-            disk_block = new_disk_block;
             local_disk_empty_block_nums[strategy.disk_id[j]] -= object.size;
             int start_pos = find_block(strategy.disk_id[j], object.size, object.tag);
             // 放元素
