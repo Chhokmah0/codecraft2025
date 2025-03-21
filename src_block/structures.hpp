@@ -151,6 +151,9 @@ struct Disk {
 
         empty_range.insert(Range{l, r});
     }
+    int request_tot_sum() {
+        return std::accumulate(request_block_sum.begin(), request_block_sum.end(), 0);
+    }
 };
 
 struct ObjectReadRequest {

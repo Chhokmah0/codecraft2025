@@ -153,7 +153,7 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
                 }
             std::shuffle(disk_block.begin(), disk_block.end(), rng);
             int target_disk_id = find_disk1(disk_block, object.size, object.tag);
-            if(target_disk_id == -1){
+            if (target_disk_id == -1) {
                 int max_block_num = 0;
                 std::vector<int> disk_list;
                 for (int disk_id = 1; disk_id <= global::N; ++disk_id)
@@ -173,11 +173,11 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
                         }
                     }
                 // 优先空的块尽可能多的盘
-                //std::shuffle(disk_block.begin(), disk_block.end(), rng);
-                if(max_block_num > 0)
-                target_disk_id = disk_list[(long long)rng() % disk_list.size()];
+                // std::shuffle(disk_block.begin(), disk_block.end(), rng);
+                if (max_block_num > 0)
+                    target_disk_id = disk_list[(long long)rng() % disk_list.size()];
                 else
-                target_disk_id = find_disk2(disk_block, object.size, object.tag);
+                    target_disk_id = find_disk2(disk_block, object.size, object.tag);
             }
             vs_disk[target_disk_id] = 1;
             assert(target_disk_id != -1);
@@ -190,8 +190,8 @@ std::vector<ObjectWriteStrategy> write_strategy(const std::vector<ObjectWriteReq
     }
     return strategies;
 }
-
-HeadStrategy head_strategy(int disk_id) {
+// 对磁盘进行策略决策/强制跳转
+HeadStrategy head_strategy(int disk_id, int should_jmp) {
     const Disk& disk = global::disks[disk_id];
     int head = disk.head;
     HeadActionType pre_action = disk.pre_action;
@@ -203,10 +203,8 @@ HeadStrategy head_strategy(int disk_id) {
         return strategy;
     }
     strategy.actions.reserve(budget);
-    int end_pos = std::min((disk.head + disk.part - 1) / disk.part * disk.part, global::V);
     // 只考虑 PASS 和 READ 操作
     while (budget != 0) {
-        if (head > end_pos) break;
         if (global::get_request_number(disk_id, head) != 0) {
             auto cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
             if (budget >= cost) {
@@ -223,7 +221,7 @@ HeadStrategy head_strategy(int disk_id) {
             pre_action = HeadActionType::PASS;
             pre_action_cost = 1;
         }
-        head = (head + 1) % global::V;
+        head = (head) % global::V + 1;
         if (head == disk.head) {
             break;
         }
@@ -235,16 +233,32 @@ HeadStrategy head_strategy(int disk_id) {
 
     // 如果策略中没有 READ，JUMP 到下一个需要读取的大块开头
     if (std::all_of(strategy.actions.begin(), strategy.actions.end(),
-                    [](const HeadAction& action) { return action.type != HeadActionType::READ; })) {
+                    [](const HeadAction& action) { return action.type != HeadActionType::READ; }) ||
+        should_jmp) {
         strategy.actions.clear();
-        // 找到需要读取的需求最多的大块开头
-        int jmp = 1, jmp_sum = disk.request_block_sum[1];
+        //  找到需要读取的需求最多的大块开头
+        std::vector<std::pair<int, std::pair<int, int>>> request_block;  //<start_pos, block_sum>
+
         for (int i = 1; i <= global::V; i += disk.part) {
-            if (jmp_sum < disk.request_block_sum[(i + disk.part - 1) / disk.part]) {
-                jmp = i;
-                jmp_sum = disk.request_block_sum[(i + disk.part - 1) / disk.part];
+            request_block.push_back({i, {disk.request_block_sum[(i + disk.part - 1) / disk.part], disk.empty_block_size[(i + disk.part - 1) / disk.part]}});
+        }
+        std::shuffle(request_block.begin(), request_block.end(), rng);
+        auto [jmp, block_status] = request_block[0];
+        auto [block_sum, empty_block_sum] = block_status;
+        for (int i = 1; i < request_block.size(); ++i) {
+            auto [new_jmp, new_block_status] = request_block[i];
+            auto [new_block_sum, new_empty_block_sum] = new_block_status;
+            if (new_block_sum > block_sum) {
+                jmp = new_jmp;
+                block_sum = new_block_sum;
+                empty_block_sum = new_empty_block_sum;
+            } else if (new_block_sum == block_sum && new_empty_block_sum < empty_block_sum) {
+                jmp = new_jmp;
+                block_sum = new_block_sum;
+                empty_block_sum = new_empty_block_sum;
             }
         }
+        while (global::get_request_number(disk_id, jmp) == 0) jmp = jmp % global::V + 1;
         strategy.add_action(HeadActionType::JUMP, jmp);
     }
 

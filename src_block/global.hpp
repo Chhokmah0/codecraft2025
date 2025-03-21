@@ -22,7 +22,7 @@ int G;  // 每个磁头每个时间片最多消耗的令牌数
 std::function<std::vector<ObjectWriteStrategy>(const std::vector<ObjectWriteRequest>&)> write_strategy_function =
     [](const std::vector<ObjectWriteRequest>& objects) { return std::vector<ObjectWriteStrategy>(objects.size()); };
 // 返回磁头策略
-std::function<HeadStrategy(int)> head_strategy_function = [](int) { return HeadStrategy{}; };
+std::function<HeadStrategy(int, int)> head_strategy_function = [](int, int) { return HeadStrategy{}; };
 // 初始化函数，在初始化时会被调用
 std::vector<std::function<void()>> init_functions;
 
@@ -39,6 +39,7 @@ std::unordered_map<int, Object> objects;  // (object_id, Object)
 
 std::vector<int> deleted_requests;    // 已经删除的请求
 std::vector<int> completed_requests;  // 已经完成的请求
+std::vector<int> should_jmp;          // 是否必须跳
 
 // 获取第 disk_id 硬盘上的第 block_index 个块的请求数量（从 1 开始编号）
 int get_request_number(int disk_id, int block_index) {
@@ -140,7 +141,7 @@ void run() {
     objects.reserve(100000);
 
     disks.resize(N + 1, Disk(V));
-
+    should_jmp.resize(N + 1, 0);
     // 初始化用的信息
     fre_len = (T + 1799) / 1800;
     for (int i = 1; i <= M; i++) {
@@ -243,7 +244,9 @@ void run() {
             Object& object = objects[obj_id];
             object.add_request(req_id);
             // 更新到磁盘上
+            int unused_part = rand() % 3;
             for (int j = 0; j < 3; j++) {
+                if (j != unused_part) continue;
                 Disk& disk = disks[object.disk_id[j]];
                 for (int k = 1; k <= object.size; k++) {
                     disk.query[object.block_id[j][k]] = timestamp;
@@ -260,7 +263,23 @@ void run() {
         // 模拟磁头动作
         for (int i = 1; i <= N; i++) {
             // 获取读取策略
-            head_strategies[index[i]] = head_strategy_function(index[i]);
+            if (should_jmp[index[i]]) {
+                head_strategies[index[i]] = head_strategy_function(index[i], 1);
+                should_jmp[index[i]] = 0;
+            } else {
+                head_strategies[index[i]] = head_strategy_function(index[i], 0);
+                if (head_strategies[index[i]].actions.size()) {
+                    if (head_strategies[index[i]].actions[0].type == HeadActionType::JUMP) {
+                        should_jmp[index[i]] = 0;
+                    } else {
+                        int end_pos = std::min((disks[index[i]].head + disks[index[i]].part - 1) / disks[index[i]].part * disks[index[i]].part, V);
+                        if (head_strategies[index[i]].actions.size() + disks[index[i]].head > end_pos) {
+                            should_jmp[index[i]] = 1;
+                        }
+                    }
+                } else
+                    head_strategies[index[i]] = head_strategy_function(index[i], 1), should_jmp[index[i]] = 0;
+            }
             simulate_head(disks[index[i]], head_strategies[index[i]]);
         }
         for (int i = 1; i <= N; i++) {
