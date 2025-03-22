@@ -9,9 +9,7 @@
 namespace io {
 inline void init_input() {
     std::cin >> global::T >> global::M >> global::N >> global::V >> global::G;
-
-    global::disks.resize(global::N + 1, Disk(global::V, global::M));
-
+    
     global::fre_len = (global::T + 1799) / 1800;
     global::fre_del.resize(global::M + 1);
     for (int i = 1; i <= global::M; i++) {

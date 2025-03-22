@@ -13,6 +13,12 @@ namespace baseline {
 // 维护用的代码，应该是不需要修改的
 // 有什么需要维护的信息先讨论一下，看看能不能加到 structures 里面
 
+// 取模操作，让 p+step 在 [l, r] 之间
+inline int mod(int p, int l, int r, int step) {
+    int len = r - l + 1;
+    return (p - l + step % len + len) % len + l;
+}
+
 inline std::vector<int> deleted_requests;
 inline std::vector<int> completed_requests;
 

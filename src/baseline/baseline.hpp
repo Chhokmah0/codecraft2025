@@ -13,20 +13,34 @@ namespace baseline {
 
 // ---------------策略----------------
 
-inline std::vector<int> local_disk_p;
+inline std::vector<std::vector<int>> local_disk_slice_p;
 
-void init_local() { local_disk_p.resize(global::N + 1, 1); }
+void init_local() {
+    global::disks.resize(global::N + 1, Disk(global::V, global::M, 512));
+    local_disk_slice_p.resize(global::N + 1);
+    for (int i = 1; i <= global::N; i++) {
+        if (i % 2 == 1) {
+            local_disk_slice_p[i] = global::disks[i].slice_start;
+        } else {
+            local_disk_slice_p[i] = global::disks[i].slice_end;
+        }
+    }
+}
 
-std::vector<int> put_forward(int disk_id, int size) {
+int move_head(int disk_id, int slice_id, int p, int step) {
+    return mod(p, global::disks[disk_id].slice_start[slice_id], global::disks[disk_id].slice_end[slice_id], step);
+}
+
+std::vector<int> put_forward(int disk_id, int slice_id, int size) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
-    int& p = local_disk_p[disk_id];
+    int& p = local_disk_slice_p[disk_id][slice_id];
     for (int i = 1; i <= size; i++) {
         while (disk.blocks[p].object_id != 0) {
-            p = p % global::V + 1;
+            p = move_head(disk_id, slice_id, p, 1);
         }
         block_id[i] = p;
-        p = p % global::V + 1;
+        p = move_head(disk_id, slice_id, p, 1);
     }
     for (int i = 1; i <= size; i++) {
         assert(block_id[i] != 0);
@@ -34,16 +48,16 @@ std::vector<int> put_forward(int disk_id, int size) {
     return block_id;
 }
 
-std::vector<int> put_back(int disk_id, int size) {
+std::vector<int> put_back(int disk_id, int slice_id, int size) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
-    int& p = local_disk_p[disk_id];
+    int& p = local_disk_slice_p[disk_id][slice_id];
     for (int i = 1; i <= size; i++) {
         while (disk.blocks[p].object_id != 0) {
-            p = (p - 2 + global::V) % global::V + 1;
+            p = move_head(disk_id, slice_id, p, -1);
         }
         block_id[i] = p;
-        p = (p - 2 + global::V) % global::V + 1;
+        p = move_head(disk_id, slice_id, p, -1);
     }
     for (int i = 1; i <= size; i++) {
         assert(block_id[i] != 0);
@@ -66,26 +80,127 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         return objects[i].tag < objects[j].tag;
     });
 
-    for (int i = 0; i < objects.size(); i++) {
+    for (int i = 0; i < object_index.size(); i++) {
         const ObjectWriteRequest& object = objects[object_index[i]];
         ObjectWriteStrategy& strategy = strategies[object_index[i]];
 
         strategy.object = object;
 
-        // 选定硬盘
-        int target_disk_id = ((object.tag - 1) / 3 * 3) % global::N + 1;
-        for (int j = 0; j < 3; j++) {
-            while (global::disks[target_disk_id].empty_block_num < object.size) {
-                target_disk_id = target_disk_id % global::N + 1;
-            }
-            strategy.disk_id[j] = target_disk_id;
-            target_disk_id = target_disk_id % global::N + 1;
+        // 选三次硬盘
+        for (int i = 0; i < 3; i++) {
+            int target_disk_id = 0;
+            int target_slice_id = 0;
+            // 优先找一个 last_tag 相同且能放下该物体的 slice
+            for (int disk_id = 1; disk_id <= global::N; disk_id++) {
+                // 不能是已经用了的硬盘
+                if (strategy.is_used_disk(disk_id)) {
+                    continue;
+                }
 
-            // 选定块，根据硬盘的奇偶性质确定放置方向
-            if (strategy.disk_id[j] % 2 == 1) {
-                strategy.block_id[j] = put_forward(strategy.disk_id[j], object.size);
+                Disk& disk = global::disks[disk_id];
+                for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+                    if (disk.slice_last_tag[slice_id] == object.tag &&
+                        disk.slice_empty_block_num[slice_id] >= object.size) {
+                        target_disk_id = disk_id;
+                        target_slice_id = slice_id;
+                        break;
+                    }
+                }
+                if (target_disk_id != 0) {
+                    break;
+                }
+            }
+
+            // 如果都放不下，则挑一个目前空 slice 最多的硬盘
+            if (target_disk_id == 0) {
+                int max_empty_slice_num = 0;
+                for (int disk_id = 1; disk_id <= global::N; disk_id++) {
+                    // 不能是已经用了的硬盘
+                    if (strategy.is_used_disk(disk_id)) {
+                        continue;
+                    }
+
+                    Disk& disk = global::disks[disk_id];
+                    int empty_slice_num = 0;
+                    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+                        if (disk.is_slice_empty(slice_id)) {
+                            empty_slice_num++;
+                        }
+                    }
+                    if (empty_slice_num > max_empty_slice_num) {
+                        max_empty_slice_num = empty_slice_num;
+                        target_disk_id = disk_id;
+                    }
+                }
+                if (target_disk_id != 0) {
+                    int temp = 0;
+                    for (int slice_id = 1; slice_id <= global::disks[target_disk_id].slice_num; slice_id++) {
+                        if (global::disks[target_disk_id].is_slice_empty(slice_id) &&
+                            global::disks[target_disk_id].slice_empty_block_num[slice_id] >= object.size) {
+                            temp = target_disk_id;
+                            target_slice_id = slice_id;
+                            break;
+                        }
+                    }
+                    // 如果找不到能放的 slice，target 置为 0
+                    target_disk_id = temp;
+                }
+            }
+
+            // 否则，挑一个剩余空间最多且含有该物品 tag 的 slice
+            if (target_disk_id == 0) {
+                int max_empty_block_num = 0;
+                for (int disk_id = 1; disk_id <= global::N; disk_id++) {
+                    // 不能是已经用了的硬盘
+                    if (strategy.is_used_disk(disk_id)) {
+                        continue;
+                    }
+
+                    Disk& disk = global::disks[disk_id];
+                    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+                        if (disk.slice_tag[slice_id] & (1 << object.tag) &&
+                            disk.slice_empty_block_num[slice_id] > max_empty_block_num &&
+                            disk.slice_empty_block_num[slice_id] >= object.size) {
+                            max_empty_block_num = disk.slice_empty_block_num[slice_id];
+                            target_disk_id = disk_id;
+                            target_slice_id = slice_id;
+                        }
+                    }
+                }
+            }
+
+            // 否则，挑一个剩余空间最多的 slice
+            if (target_disk_id == 0) {
+                int max_empty_block_num = 0;
+                for (int disk_id = 1; disk_id <= global::N; disk_id++) {
+                    // 不能是已经用了的硬盘
+                    if (strategy.is_used_disk(disk_id)) {
+                        continue;
+                    }
+
+                    Disk& disk = global::disks[disk_id];
+                    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+                        if (disk.slice_empty_block_num[slice_id] > max_empty_block_num &&
+                            disk.slice_empty_block_num[slice_id] >= object.size) {
+                            max_empty_block_num = disk.slice_empty_block_num[slice_id];
+                            target_disk_id = disk_id;
+                            target_slice_id = slice_id;
+                        }
+                    }
+                }
+            }
+
+            if (target_disk_id == 0) {
+                // 应该不会出现这种情况
+                throw std::runtime_error("No disk can be used.");
+            }
+
+            // 选好了硬盘和 slice，开始放置
+            strategy.disk_id[i] = target_disk_id;
+            if (target_disk_id % 2 == 1) {
+                strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
             } else {
-                strategy.block_id[j] = put_back(strategy.disk_id[j], object.size);
+                strategy.block_id[i] = put_back(target_disk_id, target_slice_id, object.size);
             }
         }
 
@@ -125,7 +240,7 @@ inline std::vector<HeadStrategy> head_strategy_function() {
         int budget = global::G;
 
         while (budget != 0) {
-            if (disk.margin_gain[head] > 0) {
+            if (disk.last_query_time.count(head)) {
                 auto cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
                 if (budget >= cost) {
                     strategy.add_action(HeadActionType::READ);
@@ -141,7 +256,7 @@ inline std::vector<HeadStrategy> head_strategy_function() {
                 pre_action = HeadActionType::PASS;
                 pre_action_cost = 1;
             }
-            head = (head) % global::V + 1;
+            head = mod(head, 1, global::V, 1);
             // 如果转了一圈，跳出
             if (head == disk.head) {
                 break;
@@ -151,16 +266,25 @@ inline std::vector<HeadStrategy> head_strategy_function() {
         while (!strategy.actions.empty() && strategy.actions.back().type == HeadActionType::PASS) {
             strategy.actions.pop_back();
         }
-        // 如果策略中没有 READ，JUMP 到下一个需要读取的块
+        // 如果策略中没有 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
         if (std::all_of(strategy.actions.begin(), strategy.actions.end(),
                         [](const HeadAction& action) { return action.type != HeadActionType::READ; })) {
             strategy.actions.clear();
-            // 跳转到下一个需要读取的块
-            for (int head = (disk.head + 1) % global::V; head != disk.head; head = (head + 1) % global::V) {
-                if (disk.margin_gain[head] > 0) {
-                    strategy.add_action(HeadActionType::JUMP, head);
-                    break;
+            // 跳转到收益最大的 slice 的可读取开头
+            double max_gain = 0;
+            int target_slice = 0;
+            for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+                if (disk.slice_margin_gain[slice_id] > max_gain) {
+                    max_gain = disk.slice_margin_gain[slice_id];
+                    target_slice = slice_id;
                 }
+            }
+            if (target_slice != 0) {
+                int target = disk.slice_start[target_slice];
+                while (disk.last_query_time.count(target) == 0) {
+                    target = mod(target, 1, global::V, 1);
+                }
+                strategy.add_action(HeadActionType::JUMP, target);
             }
         }
 

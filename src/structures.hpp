@@ -24,6 +24,15 @@ struct ObjectWriteStrategy {
     int disk_id[3];  // 三个副本的目标硬盘
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意 object 的块和硬盘上的块都是从 1
                                    // 开始编号的，block_id[0] 不使用。
+
+    bool is_used_disk(int disk_id) const {
+        for (int i = 0; i < 3; i++) {
+            if (this->disk_id[i] == disk_id) {
+                return true;
+            }
+        }
+        return false;
+    }
 };
 
 // 磁头动作
@@ -88,10 +97,13 @@ class Disk {
     HeadActionType pre_action;
     int pre_action_cost;
 
-    int slice_size;                          // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
-    std::vector<int> slice_id;               // slice_id[block_index] 表示这个位置被分到第几个块
-    std::vector<int> slice_tag;              // silce 内存储的对象的 tag，0 表示没有对象存储
-    std::vector<int> slice_empty_block_num;  // 每个 slice 中空闲的块数量
+    int slice_size;  // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
+    int slice_num;
+    std::vector<int> slice_id;        // slice_id[block_index] 表示这个位置被分到第几个块
+    std::vector<int> slice_tag;       // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
+    std::vector<int> slice_last_tag;  // slice 中最新的 tag
+    std::vector<std::vector<int>> slice_tag_writed_num;  // slice 中每个 tag 的块数量
+    std::vector<int> slice_empty_block_num;              // 每个 slice 中空闲的块数量
     std::vector<int> slice_start,
         slice_end;  // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
     std::vector<double> slice_margin_gain;  // 每个 slice 中的剩余查询收益
@@ -112,15 +124,49 @@ class Disk {
           pre_action(HeadActionType::JUMP),
           pre_action_cost(0),
           slice_size((v + m - 1) / m),
+          slice_num((v - 1) / slice_size + 1),
           slice_id(v + 1),
           slice_tag(slice_size + 1),
+          slice_last_tag(slice_size + 1),
+          slice_tag_writed_num(slice_size + 1, std::vector<int>(m + 1)),
           slice_empty_block_num(slice_size + 1),
           slice_start(slice_size + 1),
           slice_end(slice_size + 1),
           slice_margin_gain(slice_size + 1),
           tag_slice_num(m) {
         empty_range.insert(Range{1, v});
-        for (int i = 1; i < v; i++) {
+        for (int i = 1; i <= v; i++) {
+            slice_id[i] = (i - 1) / slice_size + 1;
+            slice_empty_block_num[slice_id[i]]++;
+            if (slice_start[slice_id[i]] == 0) {
+                slice_start[slice_id[i]] = i;
+            }
+            slice_end[slice_id[i]] = i;
+        }
+    }
+
+    Disk(int v, int m, int slice_size)
+        : blocks(v + 1),
+          margin_gain(v + 1),
+          total_margin_gain(0),
+          empty_block_num(v),
+          head(1),
+          v(v),
+          pre_action(HeadActionType::JUMP),
+          pre_action_cost(0),
+          slice_size(slice_size),
+          slice_num((v - 1) / slice_size + 1),
+          slice_id(v + 1),
+          slice_tag(slice_size + 1),
+          slice_last_tag(slice_size + 1),
+          slice_tag_writed_num(slice_size + 1, std::vector<int>(m + 1)),
+          slice_empty_block_num(slice_size + 1),
+          slice_start(slice_size + 1),
+          slice_end(slice_size + 1),
+          slice_margin_gain(slice_size + 1),
+          tag_slice_num(m) {
+        empty_range.insert(Range{1, v});
+        for (int i = 1; i <= v; i++) {
             slice_id[i] = (i - 1) / slice_size + 1;
             slice_empty_block_num[slice_id[i]]++;
             if (slice_start[slice_id[i]] == 0) {
@@ -131,7 +177,8 @@ class Disk {
     }
 
     bool is_empty() const { return empty_block_num == v; }
-    bool is_slice_empty(int slice_id) const { return slice_tag[slice_id] == 0; }
+    // NOTE: slice 不一定完全是空的，但是这里假设 slice 里此时物品很少
+    bool is_slice_empty(int slice_id) const { return slice_last_tag[slice_id] == 0; }
     bool is_tag_empty(int tag) const { return tag_slice_num[tag] == 0; }
 
     // 在第 i 个块写入指定的物品
@@ -139,11 +186,13 @@ class Disk {
         blocks[index] = object;
         writed.insert(index);
         empty_block_num--;
-        if (slice_empty_block_num[slice_id[index]] == 0) {
-            slice_tag[slice_id[index]] = object.object_tag;
+        slice_empty_block_num[slice_id[index]]--;
+        if (slice_tag_writed_num[slice_id[index]][object.object_tag] == 0) {
+            slice_tag[slice_id[index]] |= 1 << object.object_tag;
             tag_slice_num[object.object_tag]++;
         }
-        slice_empty_block_num[slice_id[index]]--;
+        slice_last_tag[slice_id[index]] = object.object_tag;
+        slice_tag_writed_num[slice_id[index]][object.object_tag]++;
 
         // 维护 empty_range
         auto it = empty_range.upper_bound(Range{index, std::numeric_limits<int>::max()});
@@ -160,14 +209,19 @@ class Disk {
 
     // 释放第 i 个块
     void erase(int index) {
-        blocks[index] = ObjectBlock{0, 0, 0, 0};
         writed.erase(index);
         empty_block_num++;
         slice_empty_block_num[slice_id[index]]++;
-        if (slice_empty_block_num[slice_id[index]] == slice_end[slice_id[index]] - slice_start[slice_id[index]] + 1) {
-            slice_tag[slice_id[index]] = 0;
-            tag_slice_num[slice_tag[slice_id[index]]]--;
+        slice_tag_writed_num[slice_id[index]][blocks[index].object_tag]--;
+        if (slice_tag_writed_num[slice_id[index]][blocks[index].object_tag] == 0) {
+            slice_tag[slice_id[index]] &= ~(1 << blocks[index].object_tag);
+            tag_slice_num[blocks[index].object_tag]--;
+            if (slice_last_tag[slice_id[index]] == blocks[index].object_tag) {
+                // 虽然不一定是空的，但是此时认为这个 slice 已经空了
+                slice_last_tag[slice_id[index]] = 0;
+            }
         }
+        blocks[index] = ObjectBlock{0, 0, 0, 0};
 
         // 维护 empty_range
         auto it = empty_range.lower_bound(Range{index, 0});
