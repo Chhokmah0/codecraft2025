@@ -28,7 +28,7 @@ std::vector<std::function<void()>> init_functions;
 
 std::mt19937 rng;
 
-// fre_xxx[i][j] 表示相应时间片内对象标签为 i 的读取、写入、删除操作的对象大小之和。
+// fre_xxx[i][j] 表示相应时间片内对象标签为 i 的读取、写入、删除操作的对象大小之前缀和。
 // i 和 j 从 1 开始编号
 std::vector<std::vector<int>> fre_del, fre_write, fre_read;
 int fre_len;
@@ -37,10 +37,10 @@ int timestamp;                            // 全局时间戳
 std::vector<Disk> disks;                  // 从 1 开始编号
 std::unordered_map<int, Object> objects;  // (object_id, Object)
 
-std::vector<int> deleted_requests;    // 已经删除的请求
-std::vector<int> completed_requests;  // 已经完成的请求
-std::vector<int> should_jmp;          // 是否必须跳
-
+std::vector<int> deleted_requests;        // 已经删除的请求
+std::vector<int> completed_requests;      // 已经完成的请求
+std::vector<int> should_jmp;              // 是否必须跳
+std::vector<std::vector<int>> pre_write;  // 该时刻之前已经做的写操作
 // 获取第 disk_id 硬盘上的第 block_index 个块的请求数量（从 1 开始编号）
 int get_request_number(int disk_id, int block_index) {
     ObjectBlock object = disks[disk_id].blocks[block_index];
@@ -139,30 +139,33 @@ void simulate_head(Disk& disk, const HeadStrategy& strategy) {
 void run() {
     std::cin >> T >> M >> N >> V >> G;
     objects.reserve(100000);
-
+    pre_write.resize(M + 1, std::vector<int>(T + 1, 0));
     disks.resize(N + 1, Disk(V));
     should_jmp.resize(N + 1, 0);
     // 初始化用的信息
     fre_len = (T + 1799) / 1800;
     for (int i = 1; i <= M; i++) {
         fre_del.resize(M + 1);
+        fre_del[i].resize(fre_len + 1);
         for (int j = 1; j <= fre_len; j++) {
-            fre_del[i].resize(fre_len + 1);
             std::cin >> fre_del[i][j];
+            fre_del[i][j] += fre_del[i][j - 1];
         }
     }
     for (int i = 1; i <= M; i++) {
         fre_write.resize(M + 1);
+        fre_write[i].resize(fre_len + 1);
         for (int j = 1; j <= fre_len; j++) {
-            fre_write[i].resize(fre_len + 1);
             std::cin >> fre_write[i][j];
+            fre_write[i][j] += fre_write[i][j - 1];
         }
     }
     for (int i = 1; i <= M; i++) {
         fre_read.resize(M + 1);
+        fre_read[i].resize(fre_len + 1);
         for (int j = 1; j <= fre_len; j++) {
-            fre_read[i].resize(fre_len + 1);
             std::cin >> fre_read[i][j];
+            fre_read[i][j] += fre_read[i][j - 1];
         }
     }
     // 初始化
@@ -203,8 +206,12 @@ void run() {
         int n_write;
         std::cin >> n_write;
         std::vector<ObjectWriteRequest> write_objects(n_write);
+        for (int i = 1; i <= M; ++i) {
+            pre_write[i][timestamp] = pre_write[i][timestamp - 1];
+        }
         for (int i = 0; i < n_write; i++) {
             std::cin >> write_objects[i].id >> write_objects[i].size >> write_objects[i].tag;
+            pre_write[write_objects[i].tag][timestamp]++;
         }
         std::vector<ObjectWriteStrategy> write_strategies = write_strategy_function(write_objects);
         // 输出策略
@@ -246,12 +253,12 @@ void run() {
             // 更新到磁盘上
             int unused_part = rand() % 3;
             for (int j = 0; j < 3; j++) {
-                if (j != unused_part) continue;
+                if (j != unused_part || j == object.tag % 3) continue;
                 Disk& disk = disks[object.disk_id[j]];
                 for (int k = 1; k <= object.size; k++) {
                     disk.query[object.block_id[j][k]] = timestamp;
-                    disk.request_sum[object.block_id[j][k]]++;
-                    disk.request_block_sum[(object.block_id[j][k] + disk.part - 1) / disk.part]++;
+                    disk.request_sum[object.block_id[j][k]] += 1.0 * (object.size + 1) / object.size;
+                    disk.request_block_sum[(object.block_id[j][k] + disk.part - 1) / disk.part] += 1.0 * (object.size + 1) / object.size;
                 }
             }
         }

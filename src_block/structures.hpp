@@ -84,10 +84,10 @@ struct Disk {
     std::vector<int> used_id;                        // 每个大块中不同元素的放置情况，用2进制数表示
     std::vector<int> empty_block_size;               // 每个大块中空余大小
     std::vector<std::vector<int>> used_id_cnt;       // 每个大块里面，用到的种类的个数
-    std::vector<int> request_sum;                    // 每个块中的剩余询问数目
-    std::vector<int> request_block_sum;              // 每个大块中的剩余询问数目
+    std::vector<double> request_sum;                 // 每个块中的剩余询问数目
+    std::vector<double> request_block_sum;           // 每个大块中的剩余询问数目
     int empty_block_num;
-    int part = 1024;              // 每x长度分一个大块
+    int part = 512;               // 每x长度分一个大块
     std::set<Range> empty_range;  // 空余的连续块
     std::set<int> used;           // 被使用的块
     std::map<int, int> query;     // 拥有查询的块，(index, last_query_time)
@@ -96,6 +96,12 @@ struct Disk {
         : pre_action(HeadActionType::JUMP), pre_action_cost(64 / 4 * 5), head(1), blocks(v + 1), empty_block_num(v) {
         empty_range.insert(Range{1, v});
         int cnt = 0;
+        if (v <= 4096)
+            part = 256;
+        else if (v <= 8192)
+            part = 512;
+        else
+            part = 1024;
         empty_block_size.push_back(0);
         for (int i = 1; i <= v; i += part) {
             div_blocks_id.push_back({i, ++cnt});
@@ -106,7 +112,6 @@ struct Disk {
         request_block_sum.resize(cnt + 1, 0);
         used_id_cnt.resize(cnt + 1, std::vector<int>(17, 0));
     }
-
     void use(int index, int tag) {
         used.insert(index);
         empty_block_size[(index + part - 1) / part]--;
