@@ -4,6 +4,7 @@
 #include <cassert>
 #include <vector>
 
+#include "../io.hpp"
 #include "utils.hpp"
 
 namespace baseline {
@@ -15,8 +16,8 @@ namespace baseline {
 
 inline std::vector<std::vector<int>> local_disk_slice_p;
 
-void init_local() {
-    global::disks.resize(global::N + 1, Disk(global::V, global::M, 512));
+inline void init_local() {
+    global::disks.resize(global::N + 1, Disk(global::V, global::M, 1024));
     local_disk_slice_p.resize(global::N + 1);
     for (int i = 1; i <= global::N; i++) {
         if (i % 2 == 1) {
@@ -27,11 +28,11 @@ void init_local() {
     }
 }
 
-int move_head(int disk_id, int slice_id, int p, int step) {
+inline int move_head(int disk_id, int slice_id, int p, int step) {
     return mod(p, global::disks[disk_id].slice_start[slice_id], global::disks[disk_id].slice_end[slice_id], step);
 }
 
-std::vector<int> put_forward(int disk_id, int slice_id, int size) {
+inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
     int& p = local_disk_slice_p[disk_id][slice_id];
@@ -48,7 +49,7 @@ std::vector<int> put_forward(int disk_id, int slice_id, int size) {
     return block_id;
 }
 
-std::vector<int> put_back(int disk_id, int slice_id, int size) {
+inline std::vector<int> put_back(int disk_id, int slice_id, int size) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
     int& p = local_disk_slice_p[disk_id][slice_id];
@@ -80,7 +81,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         return objects[i].tag < objects[j].tag;
     });
 
-    for (int i = 0; i < object_index.size(); i++) {
+    for (size_t i = 0; i < object_index.size(); i++) {
         const ObjectWriteRequest& object = objects[object_index[i]];
         ObjectWriteStrategy& strategy = strategies[object_index[i]];
 

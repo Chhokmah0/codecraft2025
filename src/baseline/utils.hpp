@@ -5,7 +5,6 @@
 #include <vector>
 
 #include "../global.hpp"
-#include "../io.hpp"
 #include "../structures.hpp"
 
 namespace baseline {
