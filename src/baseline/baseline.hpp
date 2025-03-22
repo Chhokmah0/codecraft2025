@@ -17,7 +17,7 @@ namespace baseline {
 inline std::vector<std::vector<int>> local_disk_slice_p;
 
 inline void init_local() {
-    global::disks.resize(global::N + 1, Disk(global::V, global::M, 1024));
+    global::disks.resize(global::N + 1, Disk(global::V, global::M));
     local_disk_slice_p.resize(global::N + 1);
     for (int i = 1; i <= global::N; i++) {
         if (i % 2 == 1) {
@@ -35,6 +35,26 @@ inline int move_head(int disk_id, int slice_id, int p, int step) {
 inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
+    // 如果 slice 内正好有宽度等于 size 的空余块，则放置在这些块上
+    auto it = disk.empty_range.lower_bound(Range{disk.slice_start[slice_id], 0});
+    if (it != disk.empty_range.begin()) {
+        it--;
+    }
+    while (it != disk.empty_range.end() && it->l <= disk.slice_end[slice_id]) {
+        int l = std::max(disk.slice_start[slice_id], it->l);
+        int r = std::min(disk.slice_end[slice_id], it->r);
+        if (r - l + 1 == size) {
+            for (int i = l; i <= r; i++) {
+                assert(disk.blocks[i].object_id == 0);
+            }
+            for (int i = l; i <= r; i++) {
+                block_id[i - l + 1] = i;
+            }
+            return block_id;
+        }
+        it++;
+    }
+
     int& p = local_disk_slice_p[disk_id][slice_id];
     for (int i = 1; i <= size; i++) {
         while (disk.blocks[p].object_id != 0) {
@@ -52,6 +72,29 @@ inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
 inline std::vector<int> put_back(int disk_id, int slice_id, int size) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
+    // 如果 slice 内正好有宽度等于 size 的空余块，则放置在这些块上
+    auto it = disk.empty_range.lower_bound(Range{disk.slice_end[slice_id], 0});
+    if (it == disk.empty_range.end()) {
+        it--;
+    }
+    while (it != disk.empty_range.begin() && it->r >= disk.slice_start[slice_id]) {
+        int l = std::max(disk.slice_start[slice_id], it->l);
+        int r = std::min(disk.slice_end[slice_id], it->r);
+        if (r - l + 1 == size) {
+            for (int i = l; i <= r; i++) {
+                assert(disk.blocks[i].object_id == 0);
+            }
+            for (int i = l; i <= r; i++) {
+                block_id[i - l + 1] = i;
+            }
+            return block_id;
+        }
+        if (it == disk.empty_range.begin()) {
+            break;
+        }
+        it--;
+    }
+
     int& p = local_disk_slice_p[disk_id][slice_id];
     for (int i = 1; i <= size; i++) {
         while (disk.blocks[p].object_id != 0) {
