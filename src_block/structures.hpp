@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <iterator>
 #include <map>
+#include <numeric>
 #include <ostream>
 #include <set>
 #include <string>
@@ -89,7 +90,7 @@ struct Disk {
     int empty_block_num;
     int part = 1024;              // 每x长度分一个大块
     std::set<Range> empty_range;  // 空余的连续块
-    std::set<int> used;           // 被使用的块
+    std::set<int> writed;           // 被使用的块
     std::map<int, int> query;     // 拥有查询的块，(index, last_query_time)
 
     Disk(int v)
@@ -108,7 +109,7 @@ struct Disk {
     }
 
     void use(int index, int tag) {
-        used.insert(index);
+        writed.insert(index);
         empty_block_size[(index + part - 1) / part]--;
         used_id_cnt[(index + part - 1) / part][tag]++;
         if (used_id_cnt[(index + part - 1) / part][tag] == 1) {
@@ -127,7 +128,7 @@ struct Disk {
     }
 
     void unuse(int index, int tag) {
-        used.erase(index);
+        writed.erase(index);
         empty_block_size[(index + part - 1) / part]++;
         used_id_cnt[(index + part - 1) / part][tag]--;
         if (used_id_cnt[(index + part - 1) / part][tag] == 0) {

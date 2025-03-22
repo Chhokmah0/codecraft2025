@@ -296,7 +296,7 @@ void run() {
         // check
         for (int i = 1; i <= N; i++) {
             Disk& disk = disks[i];
-            if (disk.used.empty()) {
+            if (disk.writed.empty()) {
                 assert(disk.empty_range.size() == 1);
                 assert(disk.empty_range.begin()->l == 1);
                 assert(disk.empty_range.begin()->r == V);
