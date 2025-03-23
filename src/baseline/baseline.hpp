@@ -54,7 +54,7 @@ inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
         }
         it++;
     }
-
+    // 如果没有，正常放置
     int& p = local_disk_slice_p[disk_id][slice_id];
     for (int i = 1; i <= size; i++) {
         while (disk.blocks[p].object_id != 0) {
@@ -84,8 +84,9 @@ inline std::vector<int> put_back(int disk_id, int slice_id, int size) {
             for (int i = l; i <= r; i++) {
                 assert(disk.blocks[i].object_id == 0);
             }
+            // 倒过来放
             for (int i = l; i <= r; i++) {
-                block_id[i - l + 1] = i;
+                block_id[r - i + 1] = i;
             }
             return block_id;
         }
@@ -94,7 +95,7 @@ inline std::vector<int> put_back(int disk_id, int slice_id, int size) {
         }
         it--;
     }
-
+    // 如果没有，正常放置
     int& p = local_disk_slice_p[disk_id][slice_id];
     for (int i = 1; i <= size; i++) {
         while (disk.blocks[p].object_id != 0) {
