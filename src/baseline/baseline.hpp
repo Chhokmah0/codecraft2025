@@ -124,19 +124,33 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         }
         return objects[i].tag < objects[j].tag;
     });
-
+    
     for (size_t i = 0; i < object_index.size(); i++) {
         const ObjectWriteRequest& object = objects[object_index[i]];
         ObjectWriteStrategy& strategy = strategies[object_index[i]];
-
+        
         strategy.object = object;
+        // 将已经存在 "slice 的 last_tag" 和 "object 的 tag" 相同的硬盘延后考虑
+        // 保证一定的负载均衡
+        std::vector<int> disk_ids(global::N);
+        std::iota(disk_ids.begin(), disk_ids.end(), 1);
+        auto not_have_slice_same_tag = [&](int disk_id) {
+            for (int slice_id = 1; slice_id <= global::disks[disk_id].slice_num; slice_id++) {
+                if (global::disks[disk_id].slice_last_tag[slice_id] == object.tag) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        std::stable_partition(disk_ids.begin(), disk_ids.end(), not_have_slice_same_tag);
 
         // 选三次硬盘
         for (int i = 0; i < 3; i++) {
             int target_disk_id = 0;
             int target_slice_id = 0;
-            // 优先找一个 last_tag 相同且能放下该物体的 slice
-            for (int disk_id = 1; disk_id <= global::N; disk_id++) {
+            // 优先找一个 last_tag 相同且能放下该物体的剩余空间最多的 slice
+            int max_empty_block_num = 0;
+            for (auto disk_id : disk_ids) {
                 // 不能是已经用了的硬盘
                 if (strategy.is_used_disk(disk_id)) {
                     continue;
@@ -145,7 +159,9 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                 Disk& disk = global::disks[disk_id];
                 for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
                     if (disk.slice_last_tag[slice_id] == object.tag &&
-                        disk.slice_empty_block_num[slice_id] >= object.size) {
+                        disk.slice_empty_block_num[slice_id] >= object.size &&
+                        disk.slice_empty_block_num[slice_id] > max_empty_block_num) {
+                        max_empty_block_num = disk.slice_empty_block_num[slice_id];
                         target_disk_id = disk_id;
                         target_slice_id = slice_id;
                         break;
@@ -156,10 +172,10 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                 }
             }
 
-            // 如果都放不下，则挑一个目前空 slice 最多的硬盘
+            // 如果都放不下，则挑一个目前空 slice 最多的硬盘，且最好是不在同一个硬盘上
             if (target_disk_id == 0) {
                 int max_empty_slice_num = 0;
-                for (int disk_id = 1; disk_id <= global::N; disk_id++) {
+                for (auto disk_id : disk_ids) {
                     // 不能是已经用了的硬盘
                     if (strategy.is_used_disk(disk_id)) {
                         continue;
@@ -195,7 +211,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             // 否则，挑一个剩余空间最多且含有该物品 tag 的 slice
             if (target_disk_id == 0) {
                 int max_empty_block_num = 0;
-                for (int disk_id = 1; disk_id <= global::N; disk_id++) {
+                for (auto disk_id : disk_ids) {
                     // 不能是已经用了的硬盘
                     if (strategy.is_used_disk(disk_id)) {
                         continue;
@@ -217,7 +233,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             // 否则，挑一个剩余空间最多的 slice
             if (target_disk_id == 0) {
                 int max_empty_block_num = 0;
-                for (int disk_id = 1; disk_id <= global::N; disk_id++) {
+                for (auto disk_id : disk_ids) {
                     // 不能是已经用了的硬盘
                     if (strategy.is_used_disk(disk_id)) {
                         continue;
@@ -270,8 +286,10 @@ inline std::vector<HeadStrategy> head_strategy_function() {
     std::vector<int> index(global::N + 1);
     std::iota(index.begin(), index.end(), 0);
     // 优先模拟收益较小的磁盘，此时收益较大的磁盘仍然具有收益，因此可以保证负载均衡
-    std::sort(index.begin() + 1, index.end(),
-              [&](int i, int j) { return global::disks[i].total_margin_gain < global::disks[j].total_margin_gain; });
+    // std::sort(index.begin() + 1, index.end(),
+    //           [&](int i, int j) { return global::disks[i].total_margin_gain < global::disks[j].total_margin_gain; });
+    // 貌似干不过随机？
+    std::shuffle(index.begin() + 1, index.end(), global::rng);
     for (int i = 1; i <= global::N; i++) {
         Disk& disk = global::disks[index[i]];
         HeadStrategy& strategy = head_strategies[index[i]];

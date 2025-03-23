@@ -250,9 +250,10 @@ class Disk {
         const ObjectBlock& object = blocks[index];
         assert(object.object_id != 0);
         last_query_time[index] = timestamp;
-        slice_margin_gain[slice_id[index]] += (double)(object.object_size + 1) / object.object_size;
-        margin_gain[index] += (double)(object.object_size + 1) / object.object_size;
-        total_margin_gain += (double)(object.object_size + 1) / object.object_size;
+        double gain = (double)(object.object_size + 1) / object.object_size;
+        slice_margin_gain[slice_id[index]] += gain;
+        margin_gain[index] += gain;
+        total_margin_gain += gain;
     }
 
     // 读取第 i 个块
