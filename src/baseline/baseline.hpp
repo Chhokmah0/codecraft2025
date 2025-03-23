@@ -282,37 +282,64 @@ inline std::vector<HeadStrategy> head_strategy_function() {
         HeadActionType pre_action = disk.pre_action;
         int pre_action_cost = disk.pre_action_cost;
         int budget = global::G;
+        bool vaild_strategy = false;
 
         while (budget != 0) {
-            if (disk.last_query_time.count(head)) {
-                auto cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
-                if (budget >= cost) {
-                    strategy.add_action(HeadActionType::READ);
-                    budget -= cost;
-                    pre_action = HeadActionType::READ;
-                    pre_action_cost = cost;
-                } else {
+            // 优先使用 read 操作
+            const int READ_BUDGET = 150;  // NOTE: 直到有效的 read 操作前可以使用的 token 数
+            int pre_size = strategy.actions.size();
+            int read_budget = std::min(READ_BUDGET, budget);
+            int read_cost = 0;
+            int step_read_cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
+            if (step_read_cost > read_budget) {
+                break;
+            }
+            bool vaild_read = false;
+            while (read_budget >= read_cost + step_read_cost) {
+                strategy.add_action(HeadActionType::READ);
+                pre_action = HeadActionType::READ;
+                pre_action_cost = step_read_cost;
+                read_cost += step_read_cost;
+                if (disk.last_query_time.count(head)) {
+                    vaild_read = true;
+                    vaild_strategy = true;
+                    head = mod(head, 1, global::V, 1);
                     break;
                 }
-            } else {
-                strategy.add_action(HeadActionType::PASS);
-                budget -= 1;
-                pre_action = HeadActionType::PASS;
-                pre_action_cost = 1;
+                head = mod(head, 1, global::V, 1);
+                // 如果转了一圈，跳出
+                if (head == disk.head) {
+                    break;
+                }
             }
-            head = mod(head, 1, global::V, 1);
             // 如果转了一圈，跳出
             if (head == disk.head) {
                 break;
             }
+            if (!vaild_read) {
+                // 如果没有有效的 read，清空 read 操作，改成 pass 操作
+                strategy.actions.resize(pre_size);
+                while(budget > 0) {
+                    strategy.add_action(HeadActionType::PASS);
+                    budget--;
+                    head = mod(head, 1, global::V, 1);
+                    pre_action = HeadActionType::PASS;
+                    pre_action_cost = 1;
+                    if (disk.last_query_time.count(head)) {
+                        break;
+                    }
+                }
+                continue;
+            }
+            // 如果有有效的 read，维护信息，继续下一次循环
+            budget -= read_cost;
         }
         // 清空末尾的 pass
         while (!strategy.actions.empty() && strategy.actions.back().type == HeadActionType::PASS) {
             strategy.actions.pop_back();
         }
-        // 如果策略中没有 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
-        if (std::all_of(strategy.actions.begin(), strategy.actions.end(),
-                        [](const HeadAction& action) { return action.type != HeadActionType::READ; })) {
+        // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
+        if (!vaild_strategy) {
             strategy.actions.clear();
             // 跳转到收益最大的 slice 的可读取开头
             double max_gain = 0;
