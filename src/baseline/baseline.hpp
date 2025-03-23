@@ -288,6 +288,7 @@ inline std::vector<HeadStrategy> head_strategy_function() {
             // 优先使用 read 操作
             const int READ_BUDGET = 150;  // NOTE: 直到有效的 read 操作前可以使用的 token 数
             int pre_size = strategy.actions.size();
+            int pre_head = head;
             int read_budget = std::min(READ_BUDGET, budget);
             int read_cost = 0;
             int step_read_cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
@@ -319,7 +320,8 @@ inline std::vector<HeadStrategy> head_strategy_function() {
             if (!vaild_read) {
                 // 如果没有有效的 read，清空 read 操作，改成 pass 操作
                 strategy.actions.resize(pre_size);
-                while(budget > 0) {
+                head = pre_head;
+                while (budget > 0) {
                     strategy.add_action(HeadActionType::PASS);
                     budget--;
                     head = mod(head, 1, global::V, 1);
