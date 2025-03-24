@@ -35,81 +35,105 @@ inline int move_head(int disk_id, int slice_id, int p, int step) {
 inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
-    // 如果 slice 内正好有宽度等于 size 的空余块，则放置在这些块上
-    auto it = disk.empty_range.lower_bound(Range{disk.slice_start[slice_id], 0});
-    if (it != disk.empty_range.begin()) {
-        it--;
+    //选择策略：选择最短的能放下size个块的空间
+    int fir=disk.slice_start[slice_id];
+    int end_pos=disk.slice_end[slice_id];
+    int lst=fir-1;
+    int count = 0;
+    int min_len_p = -1, min_len = 2e9;
+    while (lst < end_pos && count < size) {
+        lst++;
+        if (disk.blocks[lst].object_id == 0) count++;
     }
-    while (it != disk.empty_range.end() && it->l <= disk.slice_end[slice_id]) {
-        int l = std::max(disk.slice_start[slice_id], it->l);
-        int r = std::min(disk.slice_end[slice_id], it->r);
-        if (r - l + 1 == size) {
-            for (int i = l; i <= r; i++) {
-                assert(disk.blocks[i].object_id == 0);
-            }
-            for (int i = l; i <= r; i++) {
-                block_id[i - l + 1] = i;
-            }
-            return block_id;
+    for (int i = fir;; i++) {
+        if (lst == end_pos && count < size) break;
+        if (lst - i + 1 < min_len) {
+            min_len = lst - i + 1;
+            min_len_p = i;
         }
-        it++;
+        if (disk.blocks[i].object_id == 0) count--;
+        while (lst < end_pos && count < size) {
+            lst++;
+            if (disk.blocks[lst].object_id == 0) count++;
+        }
     }
-    // 如果没有，正常放置
-    int& p = local_disk_slice_p[disk_id][slice_id];
+    int p = min_len_p;
     for (int i = 1; i <= size; i++) {
         while (disk.blocks[p].object_id != 0) {
-            p = move_head(disk_id, slice_id, p, 1);
+            p = p % global::V + 1;
         }
         block_id[i] = p;
-        p = move_head(disk_id, slice_id, p, 1);
+        p = p % global::V + 1;
     }
     for (int i = 1; i <= size; i++) {
         assert(block_id[i] != 0);
     }
     return block_id;
 }
-
-inline std::vector<int> put_back(int disk_id, int slice_id, int size) {
-    std::vector<int> block_id(size + 1);
+//首先去所有slices里找拥有当前tag且slice里tag数量最少的，数量相同取剩余空间最大的，仍然相同就随机选一个
+int find_disk1(const std::vector<std::pair<int,int>> &disk_block, int size, int tag) {
+    int now = -1,now_status = 2147483647,res = -1,lst_size = -1;
+    for (auto [disk_id, slice_id] : disk_block) {
+        Disk& disk = global::disks[disk_id];
+        int nxt_status = disk.slice_tag[slice_id];
+        if (disk.slice_empty_block_num[slice_id] >= size) {
+            if(__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag)) {
+                now = disk_id;
+                now_status = nxt_status;
+                lst_size = disk.slice_empty_block_num[slice_id];
+            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size) {
+                now = disk_id;
+                now_status = nxt_status;
+                lst_size = disk.slice_empty_block_num[slice_id];
+            }
+        }
+    }
+    return now;
+}
+//在这个硬盘里找tag数量最少的slice，如果相同找剩余空间最大的，仍然相同就随机
+int find_disk2(const std::vector<std::pair<int,int>> &disk_block, int size, int tag) {
+    int now = -1,now_status = 2147483647,res = -1,lst_size = -1;
+    for (auto [disk_id, slice_id] : disk_block) {
+        Disk& disk = global::disks[disk_id];
+        int nxt_status = disk.slice_tag[slice_id];
+        if (disk.slice_empty_block_num[slice_id] >= size) {
+            if(__builtin_popcount(nxt_status) < __builtin_popcount(now_status) ) {
+                now = disk_id;
+                now_status = nxt_status;
+                lst_size = disk.slice_empty_block_num[slice_id];
+            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && disk.slice_empty_block_num[slice_id] > lst_size) {
+                now = disk_id;
+                now_status = nxt_status;
+                lst_size = disk.slice_empty_block_num[slice_id];
+            }
+        }
+    }
+    return now;
+}
+int find_slice(int disk_id,int size,int tag){
     const Disk& disk = global::disks[disk_id];
-    // 如果 slice 内正好有宽度等于 size 的空余块，则放置在这些块上
-    auto it = disk.empty_range.lower_bound(Range{disk.slice_end[slice_id], 0});
-    if (it == disk.empty_range.end()) {
-        it--;
-    }
-    while (it != disk.empty_range.begin() && it->r >= disk.slice_start[slice_id]) {
-        int l = std::max(disk.slice_start[slice_id], it->l);
-        int r = std::min(disk.slice_end[slice_id], it->r);
-        if (r - l + 1 == size) {
-            for (int i = l; i <= r; i++) {
-                assert(disk.blocks[i].object_id == 0);
-            }
-            // 倒过来放
-            for (int i = l; i <= r; i++) {
-                block_id[r - i + 1] = i;
-            }
-            return block_id;
+    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
+    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+        int nxt_status = disk.slice_tag[slice_id];
+        if (disk.slice_empty_block_num[slice_id] >= size) {
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag))
+                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size)
+                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
         }
-        if (it == disk.empty_range.begin()) {
-            break;
+    }
+    if (res != -1) return res;
+    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+        int nxt_status = disk.slice_tag[slice_id];
+        if (disk.slice_empty_block_num[slice_id] >= size) {
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
+                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && disk.slice_empty_block_num[slice_id] > lst_size)
+                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
         }
-        it--;
     }
-    // 如果没有，正常放置
-    int& p = local_disk_slice_p[disk_id][slice_id];
-    for (int i = 1; i <= size; i++) {
-        while (disk.blocks[p].object_id != 0) {
-            p = move_head(disk_id, slice_id, p, -1);
-        }
-        block_id[i] = p;
-        p = move_head(disk_id, slice_id, p, -1);
-    }
-    for (int i = 1; i <= size; i++) {
-        assert(block_id[i] != 0);
-    }
-    return block_id;
+    return res;
 }
-
 // 写入策略
 inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vector<ObjectWriteRequest>& objects) {
     std::vector<ObjectWriteStrategy> strategies(objects.size());
@@ -133,50 +157,41 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         std::vector<int> disk_ids(global::N);
         std::iota(disk_ids.begin(), disk_ids.end(), 1);
         // 将 (tag - 1) % V + 1 作为优先的硬盘，同时也优先考虑这里往后的硬盘
-        std::rotate(disk_ids.begin(), disk_ids.begin() + (object.tag - 1) % global::N, disk_ids.end());
+        //std::rotate(disk_ids.begin(), disk_ids.begin() + (object.tag - 1) % global::N, disk_ids.end());
         // 将已经存在 "slice 的 last_tag" 和 "object 的 tag" 相同的硬盘延后考虑
         // 保证一定的负载均衡
-        auto not_have_slice_same_tag = [&](int disk_id) {
-            for (int slice_id = 1; slice_id <= global::disks[disk_id].slice_num; slice_id++) {
-                if (global::disks[disk_id].slice_last_tag[slice_id] == object.tag) {
-                    return false;
-                }
-            }
-            return true;
-        };
-        std::stable_partition(disk_ids.begin(), disk_ids.end(), not_have_slice_same_tag);
-
+        // auto not_have_slice_same_tag = [&](int disk_id) {
+        //     for (int slice_id = 1; slice_id <= global::disks[disk_id].slice_num; slice_id++) {
+        //         if (global::disks[disk_id].slice_last_tag[slice_id] == object.tag) {
+        //             return false;
+        //         }
+        //     }
+        //     return true;
+        // };
+        //std::stable_partition(disk_ids.begin(), disk_ids.end(), not_have_slice_same_tag);
+        //std::shuffle(disk_ids.begin(), disk_ids.end(), global::rng);
         // 选三次硬盘
         for (int i = 0; i < 3; i++) {
-            int target_disk_id = 0;
-            int target_slice_id = 0;
-            // 优先找一个 last_tag 相同且能放下该物体的剩余空间最多的 slice
+            std::vector<std::pair<int,int> > disk_block;
+            int target_disk_id = -1;
+            int target_slice_id = -1;
             int max_empty_block_num = 0;
             for (auto disk_id : disk_ids) {
                 // 不能是已经用了的硬盘
                 if (strategy.is_used_disk(disk_id)) {
                     continue;
                 }
-
                 Disk& disk = global::disks[disk_id];
                 for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-                    if (disk.slice_last_tag[slice_id] == object.tag &&
-                        disk.slice_empty_block_num[slice_id] >= object.size &&
-                        disk.slice_empty_block_num[slice_id] > max_empty_block_num) {
-                        max_empty_block_num = disk.slice_empty_block_num[slice_id];
-                        target_disk_id = disk_id;
-                        target_slice_id = slice_id;
-                        break;
-                    }
+                    disk_block.push_back({disk_id, slice_id});
                 }
-                if (target_disk_id != 0) {
-                    break;
-                }
+                
             }
+            target_disk_id = find_disk1(disk_block, object.size, object.tag);
 
-            // 如果都放不下，则挑一个目前空 slice 最多的硬盘，且最好是不在同一个硬盘上
-            if (target_disk_id == 0) {
-                int max_empty_slice_num = 0;
+            if (target_disk_id == -1) {//第一步没找到有这个tag的，去选空的slices最多的硬盘，空的数量相同随机选一个盘
+                int max_block_num = 0;
+                std::vector<int> disk_list;
                 for (auto disk_id : disk_ids) {
                     // 不能是已经用了的硬盘
                     if (strategy.is_used_disk(disk_id)) {
@@ -184,97 +199,53 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                     }
 
                     Disk& disk = global::disks[disk_id];
-                    int empty_slice_num = 0;
+                    int empty_block_num = 0;
                     for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-                        if (disk.is_slice_empty(slice_id)) {
-                            empty_slice_num++;
-                        }
+                        int status = disk.slice_tag[slice_id];
+                        if(status == 0) empty_block_num++;
+                        // if (disk.slice_empty_block_num[slice_id] >= object.size) {
+                        //     empty_block_num += disk.slice_empty_block_num[slice_id];
+                        // }待尝试的方向
+                        
                     }
-                    if (empty_slice_num > max_empty_slice_num) {
-                        max_empty_slice_num = empty_slice_num;
-                        target_disk_id = disk_id;
+                    if (empty_block_num > max_block_num) {
+                        max_block_num = empty_block_num;
+                        disk_list.clear();
+                    }
+                    if (empty_block_num == max_block_num) {
+                        disk_list.push_back(disk_id);
                     }
                 }
-                if (target_disk_id != 0) {
-                    int temp = 0;
-                    for (int slice_id = 1; slice_id <= global::disks[target_disk_id].slice_num; slice_id++) {
-                        if (global::disks[target_disk_id].is_slice_empty(slice_id) &&
-                            global::disks[target_disk_id].slice_empty_block_num[slice_id] >= object.size) {
-                            temp = target_disk_id;
-                            target_slice_id = slice_id;
-                            break;
-                        }
-                    }
-                    // 如果找不到能放的 slice，target 置为 0
-                    target_disk_id = temp;
-                }
+                // 优先空的块尽可能多的盘
+                std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
+                if(max_block_num > 0) 
+                    target_disk_id = disk_list[(long long) global::rng()%disk_list.size()];
+                else//没有为空的硬盘，选tag最少的slice
+                    target_disk_id = find_disk2(disk_block,object.size,object.tag);
             }
 
-            // 否则，挑一个剩余空间最多且含有该物品 tag 的 slice
-            if (target_disk_id == 0) {
-                int max_empty_block_num = 0;
-                for (auto disk_id : disk_ids) {
-                    // 不能是已经用了的硬盘
-                    if (strategy.is_used_disk(disk_id)) {
-                        continue;
-                    }
-
-                    Disk& disk = global::disks[disk_id];
-                    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-                        if (disk.slice_tag[slice_id] & (1 << object.tag) &&
-                            disk.slice_empty_block_num[slice_id] > max_empty_block_num &&
-                            disk.slice_empty_block_num[slice_id] >= object.size) {
-                            max_empty_block_num = disk.slice_empty_block_num[slice_id];
-                            target_disk_id = disk_id;
-                            target_slice_id = slice_id;
-                        }
-                    }
-                }
-            }
-
-            // 否则，挑一个剩余空间最多的 slice
-            if (target_disk_id == 0) {
-                int max_empty_block_num = 0;
-                for (auto disk_id : disk_ids) {
-                    // 不能是已经用了的硬盘
-                    if (strategy.is_used_disk(disk_id)) {
-                        continue;
-                    }
-
-                    Disk& disk = global::disks[disk_id];
-                    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-                        if (disk.slice_empty_block_num[slice_id] > max_empty_block_num &&
-                            disk.slice_empty_block_num[slice_id] >= object.size) {
-                            max_empty_block_num = disk.slice_empty_block_num[slice_id];
-                            target_disk_id = disk_id;
-                            target_slice_id = slice_id;
-                        }
-                    }
-                }
-            }
-
-            if (target_disk_id == 0) {
+            if (target_disk_id == -1) {
                 // 应该不会出现这种情况
                 throw std::runtime_error("No disk can be used.");
             }
-
             // 选好了硬盘和 slice，开始放置
             strategy.disk_id[i] = target_disk_id;
-            if (target_disk_id % 2 == 1) {
+            target_slice_id = find_slice(strategy.disk_id[i], object.size, object.tag);
+            //if (target_disk_id % 2 == 1) {
                 strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
-            } else {
-                strategy.block_id[i] = put_back(target_disk_id, target_slice_id, object.size);
-            }
+            // } else {
+            //     strategy.block_id[i] = put_back(target_disk_id, target_slice_id, object.size);
+            // }
         }
 
         // 保证第二个硬盘上的顺序和第一个硬盘上不一样（put_back 本身就会反向放置）
-        if (strategy.disk_id[1] % 2 == strategy.disk_id[0] % 2) {
-            std::reverse(strategy.block_id[1].begin() + 1, strategy.block_id[1].end());
-        }
+        // if (strategy.disk_id[1] % 2 == strategy.disk_id[0] % 2) {
+        //     std::reverse(strategy.block_id[1].begin() + 1, strategy.block_id[1].end());
+        // }
 
         // 随机打乱第三个硬盘上的顺序
         // tmp[i]是第i个盘放哪个对象块
-        std::shuffle(strategy.block_id[2].begin() + 1, strategy.block_id[2].end(), global::rng);
+        //std::shuffle(strategy.block_id[2].begin() + 1, strategy.block_id[2].end(), global::rng);
 
         write_object(strategy);
     }
