@@ -130,10 +130,12 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         ObjectWriteStrategy& strategy = strategies[object_index[i]];
         
         strategy.object = object;
-        // 将已经存在 "slice 的 last_tag" 和 "object 的 tag" 相同的硬盘延后考虑
-        // 保证一定的负载均衡
         std::vector<int> disk_ids(global::N);
         std::iota(disk_ids.begin(), disk_ids.end(), 1);
+        // 将 (tag - 1) % V + 1 作为优先的硬盘，同时也优先考虑这里往后的硬盘
+        std::rotate(disk_ids.begin(), disk_ids.begin() + (object.tag - 1) % global::N, disk_ids.end());
+        // 将已经存在 "slice 的 last_tag" 和 "object 的 tag" 相同的硬盘延后考虑
+        // 保证一定的负载均衡
         auto not_have_slice_same_tag = [&](int disk_id) {
             for (int slice_id = 1; slice_id <= global::disks[disk_id].slice_num; slice_id++) {
                 if (global::disks[disk_id].slice_last_tag[slice_id] == object.tag) {
