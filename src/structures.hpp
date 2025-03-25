@@ -282,7 +282,7 @@ class Disk {
         if (object.object_id == 0) {  // 允许空读
             return;
         }
-        query_num[block_index]--;
+        query_num[block_index] = 0;
 
         last_query_time.erase(block_index);
         slice_margin_gain[slice_id[block_index]] -= margin_gain[block_index];
