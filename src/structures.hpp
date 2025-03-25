@@ -19,7 +19,8 @@ struct ObjectWriteRequest {
 
 struct ObjectWriteStrategy {
     ObjectWriteRequest object;
-    int disk_id[3];                // 三个副本的目标硬盘
+    int disk_id[3];   // 三个副本的目标硬盘
+    int slice_id[3];  // 三个副本在目标硬盘上的 slice_id
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意 object 的块和硬盘上的块都是从 1
                                    // 开始编号的，block_id[0] 不使用。
 
@@ -86,8 +87,9 @@ struct Range {
 class Disk {
    public:
     std::vector<ObjectBlock> blocks;  // 从 1 开始编号，0 号块不使用
-    std::vector<double> margin_gain;  // 每个 block 上的剩余查询收益
-    double total_margin_gain;         // 总的查询收益
+    std::vector<int> query_num;       // 每个 block 上的查询数量
+    std::vector<double> margin_gain;  // 每个 block 上的满分查询收益
+    std::vector<double> time_gain;    // 每个 block 上的剩余查询收益
     int empty_block_num;              // 空余的块数量
 
     int head;  // 磁头的位置
@@ -97,14 +99,16 @@ class Disk {
 
     int slice_size;  // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
     int slice_num;
-    std::vector<int> slice_id;                           // slice_id[block_index] 表示这个位置被分到第几个块
-    std::vector<int> slice_tag;                          // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
-    std::vector<int> slice_last_tag;                     // slice 中最新的 tag
+    std::vector<int> slice_id;        // slice_id[block_index] 表示这个位置被分到第几个块
+    std::vector<int> slice_tag;       // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
+    std::vector<int> slice_last_tag;  // slice 中最新的 tag
     std::vector<std::vector<int>> slice_tag_writed_num;  // slice 中每个 tag 的块数量
     std::vector<int> slice_empty_block_num;              // 每个 slice 中空闲的块数量
     std::vector<int> slice_start,
-        slice_end;                          // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
-    std::vector<double> slice_margin_gain;  // 每个 slice 中的剩余查询收益
+        slice_end;  // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
+    std::vector<int> slice_query_num;  // 每个 slice 中的查询数量 (一次大小为 size 的 obj 的查询只算一个)
+    std::vector<double> slice_margin_gain;  // 每个 slice 中的满分查询收益
+    std::vector<double> slice_time_gain;    // 每个 slice 上的剩余查询收益
 
     std::vector<int> tag_slice_num;  // 每个 tag 在该硬盘上的 slice 数量
 
@@ -114,8 +118,9 @@ class Disk {
 
     Disk(int v, int m)
         : blocks(v + 1),
+          query_num(v + 1),
           margin_gain(v + 1),
-          total_margin_gain(0),
+          time_gain(v + 1),
           empty_block_num(v),
           head(1),
           v(v),
@@ -130,8 +135,10 @@ class Disk {
           slice_empty_block_num(slice_size + 1),
           slice_start(slice_size + 1),
           slice_end(slice_size + 1),
+          slice_query_num(slice_size + 1),
           slice_margin_gain(slice_size + 1),
-          tag_slice_num(m) {
+          slice_time_gain(slice_size + 1),
+          tag_slice_num(m + 1) {
         empty_range.insert(Range{1, v});
         for (int i = 1; i <= v; i++) {
             slice_id[i] = (i - 1) / slice_size + 1;
@@ -145,8 +152,9 @@ class Disk {
 
     Disk(int v, int m, int slice_size)
         : blocks(v + 1),
+          query_num(v + 1),
           margin_gain(v + 1),
-          total_margin_gain(0),
+          time_gain(v + 1),
           empty_block_num(v),
           head(1),
           v(v),
@@ -161,8 +169,10 @@ class Disk {
           slice_empty_block_num(slice_size + 1),
           slice_start(slice_size + 1),
           slice_end(slice_size + 1),
+          slice_query_num(slice_size + 1),
           slice_margin_gain(slice_size + 1),
-          tag_slice_num(m) {
+          slice_time_gain(slice_size + 1),
+          tag_slice_num(m + 1) {
         empty_range.insert(Range{1, v});
         for (int i = 1; i <= v; i++) {
             slice_id[i] = (i - 1) / slice_size + 1;
@@ -179,8 +189,11 @@ class Disk {
     bool is_slice_empty(int slice_id) const { return slice_last_tag[slice_id] == 0; }
     bool is_tag_empty(int tag) const { return tag_slice_num[tag] == 0; }
 
+    double slice_gain(int slice_id) const { return slice_time_gain[slice_id]; }
+
     // 在第 i 个块写入指定的物品
     void write(int index, ObjectBlock object) {
+        assert(blocks[index].object_id == 0);
         blocks[index] = object;
         writed.insert(index);
         empty_block_num--;
@@ -194,9 +207,9 @@ class Disk {
 
         // 维护 empty_range
         auto it = empty_range.upper_bound(Range{index, std::numeric_limits<int>::max()});
-        it--;
-        Range range = *it;
-        empty_range.erase(it);
+        assert(it != empty_range.begin());
+        Range range = *std::prev(it);
+        empty_range.erase(range);
         if (range.l <= index - 1) {
             empty_range.insert(Range{range.l, index - 1});
         }
@@ -207,6 +220,7 @@ class Disk {
 
     // 释放第 i 个块
     void erase(int index) {
+        assert(blocks[index].object_id != 0);
         writed.erase(index);
         empty_block_num++;
         slice_empty_block_num[slice_id[index]]++;
@@ -240,42 +254,56 @@ class Disk {
         empty_range.insert(Range{l, r});
 
         // 释放查询
-        last_query_time.erase(index);
-        slice_margin_gain[slice_id[index]] -= margin_gain[index];
-        total_margin_gain -= margin_gain[index];
-        margin_gain[index] = 0;
+        read(index);
     }
+
+    void erase_total_object(int slice, int obj_size) { read_total_object(slice, obj_size); }
 
     void query(int index, int timestamp) {
         const ObjectBlock& object = blocks[index];
         assert(object.object_id != 0);
+        query_num[index]++;
+
         last_query_time[index] = timestamp;
+
         double gain = (double)(object.object_size + 1) / object.object_size;
-        slice_margin_gain[slice_id[index]] += gain;
         margin_gain[index] += gain;
-        total_margin_gain += gain;
+        time_gain[index] += gain;
+        slice_margin_gain[slice_id[index]] += gain;
+        slice_time_gain[slice_id[index]] += gain;
     }
-    void update(int index) {
-        const ObjectBlock& object = blocks[index];
-        assert(object.object_id != 0);
-        slice_margin_gain[slice_id[index]] -= margin_gain[index];
-        total_margin_gain -= margin_gain[index];
-        margin_gain[index] *= 1.01;
-        slice_margin_gain[slice_id[index]] += margin_gain[index];
-        total_margin_gain += margin_gain[index];
-    }
+
+    void query_total_object(int slice, int obj_size) { slice_query_num[slice]++; }
 
     // 读取第 i 个块
     // 因为块有可能是被其它硬盘读取的，所以 block_index 并不一定等于 head
     void read(int block_index) {
         const ObjectBlock& object = blocks[block_index];
-        if (object.object_id == 0) {
+        if (object.object_id == 0) {  // 允许空读
             return;
         }
+        query_num[block_index]--;
+
         last_query_time.erase(block_index);
         slice_margin_gain[slice_id[block_index]] -= margin_gain[block_index];
-        total_margin_gain -= margin_gain[block_index];
         margin_gain[block_index] = 0;
+        slice_time_gain[slice_id[block_index]] -= time_gain[block_index];
+        time_gain[block_index] = 0;
+    }
+
+    void read_total_object(int slice, int obj_size) { slice_query_num[slice]--; }
+
+    void next_timestamp() {
+        for (int i = 0; i < v; i++) {
+            if (query_num[i] == 0) {
+                assert(time_gain[i] == 0);
+                assert(margin_gain[i] == 0);
+            }
+            if (query_num[i]) {
+                time_gain[i] -= 0.01 * margin_gain[i];
+                slice_time_gain[i] -= 0.01 * margin_gain[i];
+            }
+        }
     }
 };
 
@@ -295,7 +323,8 @@ class Object {
     int id;
     int size;
     int tag;
-    int disk_id[3];                // 三个副本的目标硬盘
+    int disk_id[3];   // 三个副本的目标硬盘
+    int slice_id[3];  // 三个副本在目标硬盘上的 slice_id
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
    private:
     std::unordered_map<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
@@ -309,6 +338,7 @@ class Object {
         tag = strategy.object.tag;
         for (int i = 0; i < 3; i++) {
             disk_id[i] = strategy.disk_id[i];
+            slice_id[i] = strategy.slice_id[i];
             block_id[i] = strategy.block_id[i];
         }
         request_number.resize(size + 1);
