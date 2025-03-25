@@ -430,7 +430,7 @@ inline void run() {
         auto read_objects = io::read_object_input();
         for (const auto& [req_id, object_id] : read_objects) {
             Object& object = global::objects[object_id];
-            object.add_request(req_id);
+            object.add_request(req_id, global::timestamp);
             for (int i = 0; i < 3; i++) {
                 Disk& disk = global::disks[object.disk_id[i]];
                 disk.query_total_object(object.slice_id[i], object.size);
@@ -444,13 +444,9 @@ inline void run() {
         completed_requests.clear();
         auto head_strategies = head_strategy_function();
         io::read_object_output(head_strategies, completed_requests);
-        /*for (int i = 1; i <= global::N; ++i) {
-            for (int j = 1; j <= global::V; ++j) {
-                if (global::disks[i].blocks[j].object_id != 0) {
-                    global::disks[i].update(j);
-                }
-            }
-        }*/
+        for (int i = 1; i <= global::N; ++i) {
+            global::disks[i].next_timestamp();
+        }
     }
 }
 }  // namespace baseline

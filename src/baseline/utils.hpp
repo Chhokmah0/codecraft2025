@@ -31,12 +31,17 @@ inline void delete_object(int object_id) {
         for (int j = 1; j <= object.size; j++) {
             disk.erase(object.block_id[i][j]);
         }
-        disk.erase_total_object(object.slice_id[i], object.size);
     }
 
     std::vector<int> temp_deleted_requests;
     for (const auto& [req_id, request] : object.get_read_status()) {
         temp_deleted_requests.push_back(req_id);
+    }
+    for (int i = 0; i < 3; i++) {
+        for (const auto& [req_id, request] : object.get_read_status()) {
+            global::disks[object.disk_id[i]].erase_total_object(object.slice_id[i], object.size,
+                                                                global::timestamp - request.timestamp);
+        }
     }
     deleted_requests.insert(deleted_requests.end(), temp_deleted_requests.begin(), temp_deleted_requests.end());
 
@@ -79,11 +84,13 @@ inline void simulate_head(Disk& disk, const HeadStrategy& strategy) {
                     break;
                 }
                 Object& object = global::objects[block.object_id];
-                auto temp_completed_requests = object.read(block.object_block_index);
+                auto [temp_completed_requests, temp_completed_requests_timestamp] =
+                    object.read(block.object_block_index);
                 for (int j = 0; j < 3; j++) {
                     Disk& t_disk = global::disks[object.disk_id[j]];
                     for (int i = 0; i < temp_completed_requests.size(); i++) {
-                        t_disk.read_total_object(object.slice_id[j], object.size);
+                        t_disk.read_total_object(object.slice_id[j], object.size,
+                                                 global::timestamp - temp_completed_requests_timestamp[i]);
                     }
                 }
 

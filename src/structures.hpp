@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <iostream>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -10,6 +11,8 @@
 #include <unordered_map>
 #include <utility>
 #include <vector>
+
+const double alpha = 0.005;
 
 struct ObjectWriteRequest {
     int id;
@@ -88,8 +91,6 @@ class Disk {
    public:
     std::vector<ObjectBlock> blocks;  // 从 1 开始编号，0 号块不使用
     std::vector<int> query_num;       // 每个 block 上的查询数量
-    std::vector<double> margin_gain;  // 每个 block 上的满分查询收益
-    std::vector<double> time_gain;    // 每个 block 上的剩余查询收益
     int empty_block_num;              // 空余的块数量
 
     int head;  // 磁头的位置
@@ -119,8 +120,6 @@ class Disk {
     Disk(int v, int m)
         : blocks(v + 1),
           query_num(v + 1),
-          margin_gain(v + 1),
-          time_gain(v + 1),
           empty_block_num(v),
           head(1),
           v(v),
@@ -153,8 +152,6 @@ class Disk {
     Disk(int v, int m, int slice_size)
         : blocks(v + 1),
           query_num(v + 1),
-          margin_gain(v + 1),
-          time_gain(v + 1),
           empty_block_num(v),
           head(1),
           v(v),
@@ -257,7 +254,8 @@ class Disk {
         read(index);
     }
 
-    void erase_total_object(int slice, int obj_size) { read_total_object(slice, obj_size); }
+    // 销毁整个物品
+    void erase_total_object(int slice, int obj_size, int pass_time) { read_total_object(slice, obj_size, pass_time); }
 
     void query(int index, int timestamp) {
         const ObjectBlock& object = blocks[index];
@@ -265,15 +263,14 @@ class Disk {
         query_num[index]++;
 
         last_query_time[index] = timestamp;
-
-        double gain = (double)(object.object_size + 1) / object.object_size;
-        margin_gain[index] += gain;
-        time_gain[index] += gain;
-        slice_margin_gain[slice_id[index]] += gain;
-        slice_time_gain[slice_id[index]] += gain;
     }
 
-    void query_total_object(int slice, int obj_size) { slice_query_num[slice]++; }
+    // 在第 slice 个 slice 上查询 obj_size 大小的物品
+    void query_total_object(int slice, int obj_size) {
+        slice_query_num[slice]++;
+        slice_margin_gain[slice] += obj_size + 1;
+        slice_time_gain[slice] += obj_size + 1;
+    }
 
     // 读取第 i 个块
     // 因为块有可能是被其它硬盘读取的，所以 block_index 并不一定等于 head
@@ -285,24 +282,21 @@ class Disk {
         query_num[block_index] = 0;
 
         last_query_time.erase(block_index);
-        slice_margin_gain[slice_id[block_index]] -= margin_gain[block_index];
-        margin_gain[block_index] = 0;
-        slice_time_gain[slice_id[block_index]] -= time_gain[block_index];
-        time_gain[block_index] = 0;
     }
-
-    void read_total_object(int slice, int obj_size) { slice_query_num[slice]--; }
-
+    
+    
+    // 在第 slice 的 slice 上读取大小为 obj_size 的物品，此时已经经过了 pass_time
+    void read_total_object(int slice, int obj_size, int pass_time) {
+        slice_query_num[slice]--;
+        slice_margin_gain[slice] -= obj_size + 1;
+        // slice_time_gain[slice] -= obj_size + 1;
+        slice_time_gain[slice] -= (obj_size + 1) * (1 + alpha * pass_time) ;
+    }
+    
+    // 模拟下一个时间片
     void next_timestamp() {
-        for (int i = 0; i < v; i++) {
-            if (query_num[i] == 0) {
-                assert(time_gain[i] == 0);
-                assert(margin_gain[i] == 0);
-            }
-            if (query_num[i]) {
-                time_gain[i] -= 0.01 * margin_gain[i];
-                slice_time_gain[i] -= 0.01 * margin_gain[i];
-            }
+        for (int i = 1; i <= slice_num; i++) {
+            slice_time_gain[i] += alpha * slice_margin_gain[i];
         }
     }
 };
@@ -315,6 +309,7 @@ struct ObjectReadRequest {
 struct ObjectReadStatus {
     int req_id;
     int readed_size;
+    int timestamp;
     std::vector<char> readed;  // 从 1 开始标号，0 号块不使用
 };
 
@@ -344,8 +339,8 @@ class Object {
         request_number.resize(size + 1);
     }
 
-    void add_request(int req_id) {
-        read_requests[req_id] = ObjectReadStatus{req_id, 0, std::vector<char>(size + 1)};
+    void add_request(int req_id, int timestamp) {
+        read_requests[req_id] = ObjectReadStatus{req_id, 0, timestamp, std::vector<char>(size + 1)};
         for (int i = 1; i <= size; i++) {
             request_number[i]++;
         }
@@ -355,9 +350,10 @@ class Object {
     // 返回 0 说明没有请求
     int get_request_number(int block_index) const { return request_number[block_index]; }
 
-    // 读取这个对象第 block_index 个块，返回所有被完成的读取请求的编号
-    std::vector<int> read(int block_index) {
+    // 读取这个对象第 block_index 个块，返回所有被完成的读取请求的编号和请求的时间戳
+    std::pair<std::vector<int>, std::vector<int>> read(int block_index) {
         std::vector<int> completed_requests;
+        std::vector<int> completed_requests_timestamp;
         for (auto& [req_id, request] : read_requests) {
             if (request.readed[block_index] == false) {
                 request.readed[block_index] = true;
@@ -366,12 +362,13 @@ class Object {
             }
             if (request.readed_size == size) {
                 completed_requests.push_back(req_id);
+                completed_requests_timestamp.push_back(request.timestamp);
             }
         }
         for (auto req_id : completed_requests) {
             read_requests.erase(req_id);
         }
-        return completed_requests;
+        return {completed_requests, completed_requests_timestamp};
     }
 
     const std::unordered_map<int, ObjectReadStatus>& get_read_status() const { return read_requests; }
