@@ -131,7 +131,7 @@ class Disk {
           slice_start(slice_size + 1),
           slice_end(slice_size + 1),
           slice_margin_gain(slice_size + 1),
-          tag_slice_num(m) {
+          tag_slice_num(m + 1) {
         empty_range.insert(Range{1, v});
         for (int i = 1; i <= v; i++) {
             slice_id[i] = (i - 1) / slice_size + 1;
@@ -162,7 +162,7 @@ class Disk {
           slice_start(slice_size + 1),
           slice_end(slice_size + 1),
           slice_margin_gain(slice_size + 1),
-          tag_slice_num(m) {
+          tag_slice_num(m + 1) {
         empty_range.insert(Range{1, v});
         for (int i = 1; i <= v; i++) {
             slice_id[i] = (i - 1) / slice_size + 1;
