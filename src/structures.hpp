@@ -19,7 +19,7 @@ struct ObjectWriteRequest {
 
 struct ObjectWriteStrategy {
     ObjectWriteRequest object;
-    int disk_id[3];  // 三个副本的目标硬盘
+    int disk_id[3];                // 三个副本的目标硬盘
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意 object 的块和硬盘上的块都是从 1
                                    // 开始编号的，block_id[0] 不使用。
 
@@ -97,13 +97,13 @@ class Disk {
 
     int slice_size;  // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
     int slice_num;
-    std::vector<int> slice_id;        // slice_id[block_index] 表示这个位置被分到第几个块
-    std::vector<int> slice_tag;       // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
-    std::vector<int> slice_last_tag;  // slice 中最新的 tag
+    std::vector<int> slice_id;                           // slice_id[block_index] 表示这个位置被分到第几个块
+    std::vector<int> slice_tag;                          // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
+    std::vector<int> slice_last_tag;                     // slice 中最新的 tag
     std::vector<std::vector<int>> slice_tag_writed_num;  // slice 中每个 tag 的块数量
     std::vector<int> slice_empty_block_num;              // 每个 slice 中空闲的块数量
     std::vector<int> slice_start,
-        slice_end;  // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
+        slice_end;                          // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
     std::vector<double> slice_margin_gain;  // 每个 slice 中的剩余查询收益
 
     std::vector<int> tag_slice_num;  // 每个 tag 在该硬盘上的 slice 数量
@@ -255,6 +255,15 @@ class Disk {
         margin_gain[index] += gain;
         total_margin_gain += gain;
     }
+    void update(int index) {
+        const ObjectBlock& object = blocks[index];
+        assert(object.object_id != 0);
+        slice_margin_gain[slice_id[index]] -= margin_gain[index];
+        total_margin_gain -= margin_gain[index];
+        margin_gain[index] *= 1.01;
+        slice_margin_gain[slice_id[index]] += margin_gain[index];
+        total_margin_gain += margin_gain[index];
+    }
 
     // 读取第 i 个块
     // 因为块有可能是被其它硬盘读取的，所以 block_index 并不一定等于 head
@@ -286,7 +295,7 @@ class Object {
     int id;
     int size;
     int tag;
-    int disk_id[3];  // 三个副本的目标硬盘
+    int disk_id[3];                // 三个副本的目标硬盘
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
    private:
     std::unordered_map<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
