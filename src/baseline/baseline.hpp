@@ -253,6 +253,67 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
 }
 
 // 磁头移动策略
+
+int simulate_strategy(int disk_id){
+    Disk& disk = global::disks[disk_id];
+    int read_count = 0;
+    if (disk.last_query_time.empty()) {
+        return 0;
+    }
+    int head = disk.head;
+    HeadActionType pre_action = disk.pre_action;
+    int pre_action_cost = disk.pre_action_cost;
+    int budget = global::G;
+    bool vaild_strategy = false;
+
+    while (budget != 0) {
+        const int READ_BUDGET = 150;  // NOTE: 直到有效的 read 操作前可以使用的 token 数
+        int pre_count = read_count;
+        int pre_head = head;
+        int read_budget = std::min(READ_BUDGET, budget);
+        int read_cost = 0;
+        int step_read_cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
+        if (step_read_cost > read_budget) {
+            break;
+        }
+        bool vaild_read = false;
+        while (read_budget >= read_cost + step_read_cost) {
+            read_count++;
+            pre_action = HeadActionType::READ;
+            pre_action_cost = step_read_cost;
+            read_cost += step_read_cost;
+            if (disk.last_query_time.count(head)) {
+                vaild_read = true;
+                vaild_strategy = true;
+                head = mod(head, 1, global::V, 1);
+                break;
+            }
+            head = mod(head, 1, global::V, 1);
+            if (head == disk.head) {
+                break;
+            }
+        }
+        if (head == disk.head) {
+            break;
+        }
+        if (!vaild_read) {
+            read_count = pre_count;
+            head = pre_head;
+            while (budget > 0) {
+                budget--;
+                head = mod(head, 1, global::V, 1);
+                pre_action = HeadActionType::PASS;
+                pre_action_cost = 1;
+                if (disk.last_query_time.count(head)) {
+                    break;
+                }
+            }
+            continue;
+        }
+        budget -= read_cost;
+    }
+    return read_count;
+}
 std::vector<int> should_jmp;
 inline std::vector<HeadStrategy> head_strategy_function() {
     std::vector<HeadStrategy> head_strategies(global::N + 1);
@@ -262,7 +323,15 @@ inline std::vector<HeadStrategy> head_strategy_function() {
     // std::sort(index.begin() + 1, index.end(),
     //           [&](int i, int j) { return global::disks[i].total_margin_gain < global::disks[j].total_margin_gain; });
     // 貌似干不过随机？
-    std::shuffle(index.begin() + 1, index.end(), global::rng);
+    std::vector<int> simulate_read_time(global::N+1);
+    //先按照已有策略模拟一次，然后再按照读取次数排序
+    for(int i=1;i<=global::N;i++){
+        simulate_read_time[i] = simulate_strategy(i);
+    }
+
+    std::sort(index.begin() + 1, index.end(), [&simulate_read_time](int i,int j){
+        return simulate_read_time[i] > simulate_read_time[j];
+    });
     for (int i = 1; i <= global::N; i++) {
         Disk& disk = global::disks[index[i]];
         HeadStrategy& strategy = head_strategies[index[i]];
