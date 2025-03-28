@@ -15,10 +15,14 @@ namespace baseline {
 // ---------------策略----------------
 
 inline std::vector<std::vector<int>> local_disk_slice_p;
+inline std::vector<int> should_jmp;
+
+inline std::vector<std::vector<int>> suffix_sum_read;
 
 inline void init_local() {
     global::disks.resize(global::N + 1, Disk(global::V, global::M));
     local_disk_slice_p.resize(global::N + 1);
+    should_jmp.resize(global::N + 1, 0);
     for (int i = 1; i <= global::N; i++) {
         /* if (i % 2 == 1) {
              local_disk_slice_p[i] = global::disks[i].slice_start;
@@ -26,6 +30,13 @@ inline void init_local() {
              local_disk_slice_p[i] = global::disks[i].slice_end;
          }*/
         local_disk_slice_p[i] = global::disks[i].slice_start;
+    }
+
+    suffix_sum_read = global::fre_read;
+    for (int i = 1; i <= global::M; i++) {
+        for (int j = global::fre_len; j >= 1; j--) {
+            suffix_sum_read[i][j - 1] += suffix_sum_read[i][j];
+        }
     }
 }
 
@@ -78,11 +89,13 @@ int find_disk1(const std::vector<std::pair<int, int>>& disk_block, int size, int
         Disk& disk = global::disks[disk_id];
         int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag)) {
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) &&
+                (nxt_status & (1 << tag)) == (1 << tag)) {
                 now = disk_id;
                 now_status = nxt_status;
                 lst_size = disk.slice_empty_block_num[slice_id];
-            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size) {
+            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
+                       (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size) {
                 now = disk_id;
                 now_status = nxt_status;
                 lst_size = disk.slice_empty_block_num[slice_id];
@@ -102,7 +115,8 @@ int find_disk2(const std::vector<std::pair<int, int>>& disk_block, int size, int
                 now = disk_id;
                 now_status = nxt_status;
                 lst_size = disk.slice_empty_block_num[slice_id];
-            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && disk.slice_empty_block_num[slice_id] > lst_size) {
+            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
+                       disk.slice_empty_block_num[slice_id] > lst_size) {
                 now = disk_id;
                 now_status = nxt_status;
                 lst_size = disk.slice_empty_block_num[slice_id];
@@ -117,10 +131,14 @@ int find_slice(int disk_id, int size, int tag) {
     for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
         int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag))
-                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
-            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size)
-                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) &&
+                (nxt_status & (1 << tag)) == (1 << tag))
+                now = slice_id, now_status = nxt_status, res = slice_id,
+                lst_size = disk.slice_empty_block_num[slice_id];
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
+                     (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size)
+                now = slice_id, now_status = nxt_status, res = slice_id,
+                lst_size = disk.slice_empty_block_num[slice_id];
         }
     }
     if (res != -1) return res;
@@ -128,9 +146,12 @@ int find_slice(int disk_id, int size, int tag) {
         int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
             if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
-                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
-            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && disk.slice_empty_block_num[slice_id] > lst_size)
-                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
+                now = slice_id, now_status = nxt_status, res = slice_id,
+                lst_size = disk.slice_empty_block_num[slice_id];
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
+                     disk.slice_empty_block_num[slice_id] > lst_size)
+                now = slice_id, now_status = nxt_status, res = slice_id,
+                lst_size = disk.slice_empty_block_num[slice_id];
         }
     }
     return res;
@@ -142,12 +163,14 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
     std::vector<int> object_index(objects.size());
     std::iota(object_index.begin(), object_index.end(), 0);
     // 将具有相同 tag 的元素放在一起
-    // REVIEW: 并优先放大的
+    // 如果一个 tag 在之后的读取次数最多，则优先放置
+    // 并优先放大的
     std::sort(object_index.begin(), object_index.end(), [&](int i, int j) {
-        if (objects[i].tag == objects[j].tag) {
-            return objects[i].size > objects[j].size;
-        }
-        return objects[i].tag < objects[j].tag;
+        int time_block = std::min((global::timestamp - 1) / 1600 + 1, global::fre_len);
+        int read_count_i = suffix_sum_read[objects[i].tag][time_block];
+        int read_count_j = suffix_sum_read[objects[j].tag][time_block];
+        return std::tie(read_count_i, objects[i].tag, objects[i].size) <
+               std::tie(read_count_j, objects[j].tag, objects[j].size);
     });
 
     for (size_t i = 0; i < object_index.size(); i++) {
@@ -314,7 +337,7 @@ int simulate_strategy(int disk_id) {
     }
     return read_count;
 }
-std::vector<int> should_jmp;
+
 inline std::vector<HeadStrategy> head_strategy_function() {
     std::vector<HeadStrategy> head_strategies(global::N + 1);
     std::vector<int> index(global::N + 1);
@@ -329,9 +352,8 @@ inline std::vector<HeadStrategy> head_strategy_function() {
         simulate_read_time[i] = simulate_strategy(i);
     }
 
-    std::sort(index.begin() + 1, index.end(), [&simulate_read_time](int i, int j) {
-        return simulate_read_time[i] > simulate_read_time[j];
-    });
+    std::sort(index.begin() + 1, index.end(),
+              [&simulate_read_time](int i, int j) { return simulate_read_time[i] > simulate_read_time[j]; });
     for (int i = 1; i <= global::N; i++) {
         int disk_id = index[i];
         Disk& disk = global::disks[disk_id];
@@ -432,7 +454,8 @@ inline std::vector<HeadStrategy> head_strategy_function() {
         simulate_head(disk, strategy);
         // 如果是跳转的话，将该块对应的其他块的信息清空
         if (strategy.actions[0].type == HeadActionType::JUMP) {
-            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]]; pos++) {
+            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]];
+                 pos++) {
                 ObjectBlock& block = disk.blocks[pos];
                 if (block.object_id == 0 || !disk.last_query_time.count(pos)) continue;
                 Object& object = global::objects[block.object_id];
@@ -457,7 +480,6 @@ inline void run() {
     io::init_input();
     init_local();
     io::init_output();
-    should_jmp.resize(global::N + 1, 0);
     for (global::timestamp = 1; global::timestamp <= global::T + 105; global::timestamp++) {
         // 时间片交互事件
         io::timestamp_align(global::timestamp);
