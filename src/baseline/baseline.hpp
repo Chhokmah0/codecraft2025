@@ -435,10 +435,10 @@ inline std::vector<HeadStrategy> head_strategy_function() {
                 ObjectBlock& block = disk.blocks[pos];
                 if (block.object_id == 0) continue;
                 Object& object = global::objects[block.object_id];
-                for (int i = 0; i < 3; i++) {
-                    Disk& diskt = global::disks[object.disk_id[i]];
+                for (int d = 0; d < 3; d++) {
+                    Disk& diskt = global::disks[object.disk_id[d]];
                     for (int j = 1; j <= object.size; j++) {
-                        diskt.update2(object.block_id[i][j]);
+                        diskt.clean_gain(object.block_id[d][j]);
                     }
                 }
             }
@@ -492,7 +492,7 @@ inline void run() {
         for (int i = 1; i <= global::N; ++i) {
             for (int j = 1; j <= global::V; ++j) {
                 if (global::disks[i].blocks[j].object_id != 0) {
-                    global::disks[i].update1(j);
+                    global::disks[i].update(j);
                 }
             }
         }
