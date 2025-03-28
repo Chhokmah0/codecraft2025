@@ -166,7 +166,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
     // 如果一个 tag 在之后的读取次数最多，则优先放置
     // 并优先放大的
     std::sort(object_index.begin(), object_index.end(), [&](int i, int j) {
-        int time_block = std::min((global::timestamp - 1) / 1600 + 1, global::fre_len);
+        int time_block = std::min((global::timestamp - 1) / 1800 + 1, global::fre_len);
         int read_count_i = suffix_sum_read[objects[i].tag][time_block];
         int read_count_j = suffix_sum_read[objects[j].tag][time_block];
         return std::tie(read_count_i, objects[i].tag, objects[i].size) <
