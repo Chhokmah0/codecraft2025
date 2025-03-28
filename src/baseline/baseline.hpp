@@ -333,8 +333,9 @@ inline std::vector<HeadStrategy> head_strategy_function() {
         return simulate_read_time[i] > simulate_read_time[j];
     });
     for (int i = 1; i <= global::N; i++) {
-        Disk& disk = global::disks[index[i]];
-        HeadStrategy& strategy = head_strategies[index[i]];
+        int disk_id = index[i];
+        Disk& disk = global::disks[disk_id];
+        HeadStrategy& strategy = head_strategies[disk_id];
         if (disk.last_query_time.empty()) {
             continue;
         }
@@ -402,7 +403,7 @@ inline std::vector<HeadStrategy> head_strategy_function() {
             strategy.actions.pop_back();
         }
         // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
-        if (!vaild_strategy || should_jmp[index[i]]) {
+        if (!vaild_strategy || should_jmp[disk_id]) {
             strategy.actions.clear();
             // 跳转到收益最大的 slice 的可读取开头
             double max_gain = 0;
@@ -423,22 +424,25 @@ inline std::vector<HeadStrategy> head_strategy_function() {
         }
         // 判断是否已经扫完块并且下一步是否要强制跳转
         if (strategy.actions[0].type == HeadActionType::JUMP) {
-            should_jmp[index[i]] = 0;
+            should_jmp[disk_id] = 0;
         } else if ((int)strategy.actions.size() + disk.head >= disk.slice_end[disk.slice_id[disk.head]]) {
-            should_jmp[index[i]] = 1;
+            should_jmp[disk_id] = 1;
         }
         // 模拟磁头动作
         simulate_head(disk, strategy);
         // 如果是跳转的话，将该块对应的其他块的信息清空
         if (strategy.actions[0].type == HeadActionType::JUMP) {
-            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]]; pos = mod(pos, 1, global::V, 1)) {
+            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]]; pos++) {
                 ObjectBlock& block = disk.blocks[pos];
-                if (block.object_id == 0) continue;
+                if (block.object_id == 0 || !disk.last_query_time.count(pos)) continue;
                 Object& object = global::objects[block.object_id];
                 for (int i = 0; i < 3; i++) {
+                    if (object.disk_id[i] == disk_id) {
+                        continue;
+                    }
                     Disk& diskt = global::disks[object.disk_id[i]];
                     for (int j = 1; j <= object.size; j++) {
-                        diskt.update2(object.block_id[i][j]);
+                        diskt.clean_gain(object.block_id[i][j]);
                     }
                 }
             }
@@ -492,7 +496,7 @@ inline void run() {
         for (int i = 1; i <= global::N; ++i) {
             for (int j = 1; j <= global::V; ++j) {
                 if (global::disks[i].blocks[j].object_id != 0) {
-                    global::disks[i].update1(j);
+                    global::disks[i].update(j);
                 }
             }
         }

@@ -261,26 +261,24 @@ class Disk {
         total_margin_gain += gain;
     }
     // 更新全局贡献
-    void update1(int index) {
+    void update(int index) {
         const ObjectBlock& object = blocks[index];
         assert(object.object_id != 0);
         slice_margin_gain[slice_id[index]] -= margin_gain[index];
         total_margin_gain -= margin_gain[index];
-        margin_gain[index] = 1.005 * margin_gain[index];
+        margin_gain[index] = 0.999 * margin_gain[index];
         // margin_gain[index] += 0.01 * start_margin_gain[index];
         slice_margin_gain[slice_id[index]] += margin_gain[index];
         total_margin_gain += margin_gain[index];
     }
     // 在其他块被占用后，更新当前块的贡献
-    void update2(int index) {
+    void clean_gain(int index) {
         const ObjectBlock& object = blocks[index];
         assert(object.object_id != 0);
         slice_margin_gain[slice_id[index]] -= margin_gain[index];
         total_margin_gain -= margin_gain[index];
         margin_gain[index] = 0;
         start_margin_gain[index] = 0;
-        slice_margin_gain[slice_id[index]] += margin_gain[index];
-        total_margin_gain += margin_gain[index];
     }
     // 读取第 i 个块
     // 因为块有可能是被其它硬盘读取的，所以 block_index 并不一定等于 head
