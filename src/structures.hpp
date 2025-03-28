@@ -85,10 +85,11 @@ struct Range {
 
 class Disk {
    public:
-    std::vector<ObjectBlock> blocks;  // 从 1 开始编号，0 号块不使用
-    std::vector<double> margin_gain;  // 每个 block 上的剩余查询收益
-    double total_margin_gain;         // 总的查询收益
-    int empty_block_num;              // 空余的块数量
+    std::vector<ObjectBlock> blocks;        // 从 1 开始编号，0 号块不使用
+    std::vector<double> margin_gain;        // 每个 block 上的剩余查询收益
+    std::vector<double> start_margin_gain;  // 不考虑衰减的每个block上的查询收益
+    double total_margin_gain;               // 总的查询收益
+    int empty_block_num;                    // 空余的块数量
 
     int head;  // 磁头的位置
     int v;     // 磁盘的总大小
@@ -115,6 +116,7 @@ class Disk {
     Disk(int v, int m)
         : blocks(v + 1),
           margin_gain(v + 1),
+          start_margin_gain(v + 1),
           total_margin_gain(0),
           empty_block_num(v),
           head(1),
@@ -146,6 +148,7 @@ class Disk {
     Disk(int v, int m, int slice_size)
         : blocks(v + 1),
           margin_gain(v + 1),
+          start_margin_gain(v + 1),
           total_margin_gain(0),
           empty_block_num(v),
           head(1),
@@ -243,6 +246,7 @@ class Disk {
         last_query_time.erase(index);
         slice_margin_gain[slice_id[index]] -= margin_gain[index];
         total_margin_gain -= margin_gain[index];
+        start_margin_gain[index] = 0;
         margin_gain[index] = 0;
     }
 
@@ -253,18 +257,31 @@ class Disk {
         double gain = (double)(object.object_size + 1) / object.object_size;
         slice_margin_gain[slice_id[index]] += gain;
         margin_gain[index] += gain;
+        start_margin_gain[index] += gain;
         total_margin_gain += gain;
     }
-    void update(int index) {
+    // 更新全局贡献
+    void update1(int index) {
         const ObjectBlock& object = blocks[index];
         assert(object.object_id != 0);
         slice_margin_gain[slice_id[index]] -= margin_gain[index];
         total_margin_gain -= margin_gain[index];
-        margin_gain[index] *= 1.01;
+        margin_gain[index] = 1.005 * margin_gain[index];
+        // margin_gain[index] += 0.01 * start_margin_gain[index];
         slice_margin_gain[slice_id[index]] += margin_gain[index];
         total_margin_gain += margin_gain[index];
     }
-
+    // 在其他块被占用后，更新当前块的贡献
+    void update2(int index) {
+        const ObjectBlock& object = blocks[index];
+        assert(object.object_id != 0);
+        slice_margin_gain[slice_id[index]] -= margin_gain[index];
+        total_margin_gain -= margin_gain[index];
+        margin_gain[index] = 0;
+        start_margin_gain[index] = 0;
+        slice_margin_gain[slice_id[index]] += margin_gain[index];
+        total_margin_gain += margin_gain[index];
+    }
     // 读取第 i 个块
     // 因为块有可能是被其它硬盘读取的，所以 block_index 并不一定等于 head
     void read(int block_index) {
@@ -276,6 +293,7 @@ class Disk {
         slice_margin_gain[slice_id[block_index]] -= margin_gain[block_index];
         total_margin_gain -= margin_gain[block_index];
         margin_gain[block_index] = 0;
+        start_margin_gain[block_index] = 0;
     }
 };
 

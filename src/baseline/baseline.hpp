@@ -254,7 +254,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
 
 // 磁头移动策略
 
-int simulate_strategy(int disk_id){
+int simulate_strategy(int disk_id) {
     Disk& disk = global::disks[disk_id];
     int read_count = 0;
     if (disk.last_query_time.empty()) {
@@ -323,13 +323,13 @@ inline std::vector<HeadStrategy> head_strategy_function() {
     // std::sort(index.begin() + 1, index.end(),
     //           [&](int i, int j) { return global::disks[i].total_margin_gain < global::disks[j].total_margin_gain; });
     // 貌似干不过随机？
-    std::vector<int> simulate_read_time(global::N+1);
-    //先按照已有策略模拟一次，然后再按照读取次数排序
-    for(int i=1;i<=global::N;i++){
+    std::vector<int> simulate_read_time(global::N + 1);
+    // 先按照已有策略模拟一次，然后再按照读取次数排序
+    for (int i = 1; i <= global::N; i++) {
         simulate_read_time[i] = simulate_strategy(i);
     }
 
-    std::sort(index.begin() + 1, index.end(), [&simulate_read_time](int i,int j){
+    std::sort(index.begin() + 1, index.end(), [&simulate_read_time](int i, int j) {
         return simulate_read_time[i] > simulate_read_time[j];
     });
     for (int i = 1; i <= global::N; i++) {
@@ -424,11 +424,25 @@ inline std::vector<HeadStrategy> head_strategy_function() {
         // 判断是否已经扫完块并且下一步是否要强制跳转
         if (strategy.actions[0].type == HeadActionType::JUMP) {
             should_jmp[index[i]] = 0;
-        } else if (strategy.actions.size() + disk.head >= std::min(global::V, (disk.head + disk.slice_size - 1) / disk.slice_size * disk.slice_size)) {
+        } else if ((int)strategy.actions.size() + disk.head >= disk.slice_end[disk.slice_id[disk.head]]) {
             should_jmp[index[i]] = 1;
         }
         // 模拟磁头动作
         simulate_head(disk, strategy);
+        // 如果是跳转的话，将该块对应的其他块的信息清空
+        if (strategy.actions[0].type == HeadActionType::JUMP) {
+            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]]; pos = mod(pos, 1, global::V, 1)) {
+                ObjectBlock& block = disk.blocks[pos];
+                if (block.object_id == 0) continue;
+                Object& object = global::objects[block.object_id];
+                for (int i = 0; i < 3; i++) {
+                    Disk& diskt = global::disks[object.disk_id[i]];
+                    for (int j = 1; j <= object.size; j++) {
+                        diskt.update2(object.block_id[i][j]);
+                    }
+                }
+            }
+        }
     }
     return head_strategies;
 }
@@ -475,13 +489,13 @@ inline void run() {
         completed_requests.clear();
         auto head_strategies = head_strategy_function();
         io::read_object_output(head_strategies, completed_requests);
-        /*for (int i = 1; i <= global::N; ++i) {
+        for (int i = 1; i <= global::N; ++i) {
             for (int j = 1; j <= global::V; ++j) {
                 if (global::disks[i].blocks[j].object_id != 0) {
-                    global::disks[i].update(j);
+                    global::disks[i].update1(j);
                 }
             }
-        }*/
+        }
     }
 }
 }  // namespace baseline
