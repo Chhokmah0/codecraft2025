@@ -239,7 +239,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                     }
                 }
                 // 优先空的块尽可能多的盘
-                std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
+                // std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
                 if (max_block_num > 0)
                     target_disk_id = disk_list[(long long)global::rng() % disk_list.size()];
                 else  // 没有为空的硬盘，选tag最少的slice
