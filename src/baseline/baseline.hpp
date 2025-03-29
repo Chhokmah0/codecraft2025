@@ -15,10 +15,14 @@ namespace baseline {
 // ---------------策略----------------
 
 inline std::vector<std::vector<int>> local_disk_slice_p;
-
+inline std::vector<int> should_jmp;
+inline std::vector<int> ord;
+inline std::vector<std::vector<int>> suffix_sum_read;
+inline std::vector<int> new_tag;
 inline void init_local() {
     global::disks.resize(global::N + 1, Disk(global::V, global::M));
     local_disk_slice_p.resize(global::N + 1);
+    should_jmp.resize(global::N + 1, 0);
     for (int i = 1; i <= global::N; i++) {
         /* if (i % 2 == 1) {
              local_disk_slice_p[i] = global::disks[i].slice_start;
@@ -26,6 +30,25 @@ inline void init_local() {
              local_disk_slice_p[i] = global::disks[i].slice_end;
          }*/
         local_disk_slice_p[i] = global::disks[i].slice_start;
+    }
+
+    suffix_sum_read = global::fre_read;
+    for (int i = 1; i <= global::M; i++) {
+        for (int j = global::fre_len; j >= 1; j--) {
+            suffix_sum_read[i][j - 1] += suffix_sum_read[i][j];
+        }
+    }
+
+    ord.resize(global::M + 1);
+    new_tag.resize(global::M + 1);
+    std::iota(ord.begin(), ord.end(), 0);
+    std::sort(ord.begin() + 1, ord.end(), [&](int i, int j) {
+        return suffix_sum_read[i][0] > suffix_sum_read[j][0];
+    });
+
+    for (int i = 1; i <= global::M / 2; i++) {
+        new_tag[ord[i]] = i;
+        new_tag[ord[global::M - i + 1]] = i;
     }
 }
 
@@ -78,11 +101,13 @@ int find_disk1(const std::vector<std::pair<int, int>>& disk_block, int size, int
         Disk& disk = global::disks[disk_id];
         int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag)) {
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) &&
+                (nxt_status & (1 << tag)) == (1 << tag)) {
                 now = disk_id;
                 now_status = nxt_status;
                 lst_size = disk.slice_empty_block_num[slice_id];
-            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size) {
+            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
+                       (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size) {
                 now = disk_id;
                 now_status = nxt_status;
                 lst_size = disk.slice_empty_block_num[slice_id];
@@ -102,7 +127,8 @@ int find_disk2(const std::vector<std::pair<int, int>>& disk_block, int size, int
                 now = disk_id;
                 now_status = nxt_status;
                 lst_size = disk.slice_empty_block_num[slice_id];
-            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && disk.slice_empty_block_num[slice_id] > lst_size) {
+            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
+                       disk.slice_empty_block_num[slice_id] > lst_size) {
                 now = disk_id;
                 now_status = nxt_status;
                 lst_size = disk.slice_empty_block_num[slice_id];
@@ -117,10 +143,14 @@ int find_slice(int disk_id, int size, int tag) {
     for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
         int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag))
-                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
-            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size)
-                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
+            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) &&
+                (nxt_status & (1 << tag)) == (1 << tag))
+                now = slice_id, now_status = nxt_status, res = slice_id,
+                lst_size = disk.slice_empty_block_num[slice_id];
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
+                     (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size)
+                now = slice_id, now_status = nxt_status, res = slice_id,
+                lst_size = disk.slice_empty_block_num[slice_id];
         }
     }
     if (res != -1) return res;
@@ -128,9 +158,12 @@ int find_slice(int disk_id, int size, int tag) {
         int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
             if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
-                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
-            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) && disk.slice_empty_block_num[slice_id] > lst_size)
-                now = slice_id, now_status = nxt_status, res = slice_id, lst_size = disk.slice_empty_block_num[slice_id];
+                now = slice_id, now_status = nxt_status, res = slice_id,
+                lst_size = disk.slice_empty_block_num[slice_id];
+            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
+                     disk.slice_empty_block_num[slice_id] > lst_size)
+                now = slice_id, now_status = nxt_status, res = slice_id,
+                lst_size = disk.slice_empty_block_num[slice_id];
         }
     }
     return res;
@@ -142,12 +175,15 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
     std::vector<int> object_index(objects.size());
     std::iota(object_index.begin(), object_index.end(), 0);
     // 将具有相同 tag 的元素放在一起
-    // REVIEW: 并优先放大的
+    // 如果一个 tag 在之后的读取次数最多，则优先放置
+    // 并优先放大的
     std::sort(object_index.begin(), object_index.end(), [&](int i, int j) {
-        if (objects[i].tag == objects[j].tag) {
-            return objects[i].size > objects[j].size;
-        }
-        return objects[i].tag < objects[j].tag;
+        int time_block = std::min((global::timestamp - 1) / 1800 + 1, global::fre_len);
+        int read_count_i = suffix_sum_read[objects[i].tag][time_block];
+        int read_count_j = suffix_sum_read[objects[j].tag][time_block];
+        // FIXME: 这里的实现有点问题，但不知道为啥有用
+        return std::tie(read_count_i, objects[i].tag, objects[i].size) <
+               std::tie(read_count_j, objects[j].tag, objects[j].size);
     });
 
     for (size_t i = 0; i < object_index.size(); i++) {
@@ -190,7 +226,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             target_disk_id = find_disk1(disk_block, object.size, object.tag);
 
             if (target_disk_id == -1) {  // 第一步没找到有这个tag的，去选空的slices最多的硬盘，空的数量相同随机选一个盘
-                int max_block_num = 0;
+                int max_slice_num = 0;
                 std::vector<int> disk_list;
                 for (auto disk_id : disk_ids) {
                     // 不能是已经用了的硬盘
@@ -199,26 +235,26 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                     }
 
                     Disk& disk = global::disks[disk_id];
-                    int empty_block_num = 0;
+                    int empty_slice_num = 0;
                     for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
                         int status = disk.slice_tag[slice_id];
-                        if (status == 0) empty_block_num++;
+                        if (status == 0) empty_slice_num++;
                         // if (disk.slice_empty_block_num[slice_id] >= object.size) {
                         //     empty_block_num += disk.slice_empty_block_num[slice_id];
                         // }待尝试的方向
                     }
-                    if (empty_block_num > max_block_num) {
-                        max_block_num = empty_block_num;
+                    if (empty_slice_num > max_slice_num) {
+                        max_slice_num = empty_slice_num;
                         disk_list.clear();
                     }
-                    if (empty_block_num == max_block_num) {
+                    if (empty_slice_num == max_slice_num) {
                         disk_list.push_back(disk_id);
                     }
                 }
                 // 优先空的块尽可能多的盘
-                std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
-                if (max_block_num > 0)
-                    target_disk_id = disk_list[(long long)global::rng() % disk_list.size()];
+                // std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
+                if (max_slice_num > 0)
+                    target_disk_id = disk_list[global::rng() % disk_list.size()];
                 else  // 没有为空的硬盘，选tag最少的slice
                     target_disk_id = find_disk2(disk_block, object.size, object.tag);
             }
@@ -254,12 +290,13 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
 
 // 磁头移动策略
 
-int simulate_strategy(int disk_id) {
+HeadStrategy simulate_strategy(int disk_id) {
     Disk& disk = global::disks[disk_id];
-    int read_count = 0;
+    HeadStrategy strategy;
     if (disk.last_query_time.empty()) {
-        return 0;
+        return strategy;
     }
+    // 考虑某个磁头的策略
     int head = disk.head;
     HeadActionType pre_action = disk.pre_action;
     int pre_action_cost = disk.pre_action_cost;
@@ -267,8 +304,9 @@ int simulate_strategy(int disk_id) {
     bool vaild_strategy = false;
 
     while (budget != 0) {
+        // 优先使用 read 操作
         const int READ_BUDGET = 150;  // NOTE: 直到有效的 read 操作前可以使用的 token 数
-        int pre_count = read_count;
+        int pre_size = strategy.actions.size();
         int pre_head = head;
         int read_budget = std::min(READ_BUDGET, budget);
         int read_cost = 0;
@@ -278,7 +316,7 @@ int simulate_strategy(int disk_id) {
         }
         bool vaild_read = false;
         while (read_budget >= read_cost + step_read_cost) {
-            read_count++;
+            strategy.add_action(HeadActionType::READ);
             pre_action = HeadActionType::READ;
             pre_action_cost = step_read_cost;
             read_cost += step_read_cost;
@@ -289,17 +327,21 @@ int simulate_strategy(int disk_id) {
                 break;
             }
             head = mod(head, 1, global::V, 1);
+            // 如果转了一圈，跳出
             if (head == disk.head) {
                 break;
             }
         }
+        // 如果转了一圈，跳出
         if (head == disk.head) {
             break;
         }
         if (!vaild_read) {
-            read_count = pre_count;
+            // 如果没有有效的 read，清空 read 操作，改成 pass 操作
+            strategy.actions.resize(pre_size);
             head = pre_head;
             while (budget > 0) {
+                strategy.add_action(HeadActionType::PASS);
                 budget--;
                 head = mod(head, 1, global::V, 1);
                 pre_action = HeadActionType::PASS;
@@ -310,11 +352,36 @@ int simulate_strategy(int disk_id) {
             }
             continue;
         }
+        // 如果有有效的 read，维护信息，继续下一次循环
         budget -= read_cost;
     }
-    return read_count;
+    // 清空末尾的 pass
+    while (!strategy.actions.empty() && strategy.actions.back().type == HeadActionType::PASS) {
+        strategy.actions.pop_back();
+    }
+    // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
+    if (!vaild_strategy || should_jmp[disk_id]) {
+        strategy.actions.clear();
+        // 跳转到收益最大的 slice 的可读取开头
+        double max_gain = 0;
+        int target_slice = 0;
+        for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+            if (disk.slice_margin_gain[slice_id] > max_gain) {
+                max_gain = disk.slice_margin_gain[slice_id];
+                target_slice = slice_id;
+            }
+        }
+        if (target_slice != 0) {
+            int target = disk.slice_start[target_slice];
+            while (disk.last_query_time.count(target) == 0) {
+                target = mod(target, 1, global::V, 1);
+            }
+            strategy.add_action(HeadActionType::JUMP, target);
+        }
+    }
+    return strategy;
 }
-std::vector<int> should_jmp;
+
 inline std::vector<HeadStrategy> head_strategy_function() {
     std::vector<HeadStrategy> head_strategies(global::N + 1);
     std::vector<int> index(global::N + 1);
@@ -326,119 +393,41 @@ inline std::vector<HeadStrategy> head_strategy_function() {
     std::vector<int> simulate_read_time(global::N + 1);
     // 先按照已有策略模拟一次，然后再按照读取次数排序
     for (int i = 1; i <= global::N; i++) {
-        simulate_read_time[i] = simulate_strategy(i);
+        HeadStrategy strategy = simulate_strategy(i);
+        simulate_read_time[i] =
+            std::count_if(strategy.actions.begin(), strategy.actions.end(),
+                          [](const HeadAction& action) { return action.type == HeadActionType::READ; });
     }
 
-    std::sort(index.begin() + 1, index.end(), [&simulate_read_time](int i, int j) {
-        return simulate_read_time[i] > simulate_read_time[j];
-    });
+    std::sort(index.begin() + 1, index.end(),
+              [&simulate_read_time](int i, int j) { return simulate_read_time[i] > simulate_read_time[j]; });
     for (int i = 1; i <= global::N; i++) {
-        Disk& disk = global::disks[index[i]];
-        HeadStrategy& strategy = head_strategies[index[i]];
-        if (disk.last_query_time.empty()) {
-            continue;
-        }
-        // 考虑某个磁头的策略
-        int head = disk.head;
-        HeadActionType pre_action = disk.pre_action;
-        int pre_action_cost = disk.pre_action_cost;
-        int budget = global::G;
-        bool vaild_strategy = false;
-
-        while (budget != 0) {
-            // 优先使用 read 操作
-            const int READ_BUDGET = 150;  // NOTE: 直到有效的 read 操作前可以使用的 token 数
-            int pre_size = strategy.actions.size();
-            int pre_head = head;
-            int read_budget = std::min(READ_BUDGET, budget);
-            int read_cost = 0;
-            int step_read_cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
-            if (step_read_cost > read_budget) {
-                break;
-            }
-            bool vaild_read = false;
-            while (read_budget >= read_cost + step_read_cost) {
-                strategy.add_action(HeadActionType::READ);
-                pre_action = HeadActionType::READ;
-                pre_action_cost = step_read_cost;
-                read_cost += step_read_cost;
-                if (disk.last_query_time.count(head)) {
-                    vaild_read = true;
-                    vaild_strategy = true;
-                    head = mod(head, 1, global::V, 1);
-                    break;
-                }
-                head = mod(head, 1, global::V, 1);
-                // 如果转了一圈，跳出
-                if (head == disk.head) {
-                    break;
-                }
-            }
-            // 如果转了一圈，跳出
-            if (head == disk.head) {
-                break;
-            }
-            if (!vaild_read) {
-                // 如果没有有效的 read，清空 read 操作，改成 pass 操作
-                strategy.actions.resize(pre_size);
-                head = pre_head;
-                while (budget > 0) {
-                    strategy.add_action(HeadActionType::PASS);
-                    budget--;
-                    head = mod(head, 1, global::V, 1);
-                    pre_action = HeadActionType::PASS;
-                    pre_action_cost = 1;
-                    if (disk.last_query_time.count(head)) {
-                        break;
-                    }
-                }
-                continue;
-            }
-            // 如果有有效的 read，维护信息，继续下一次循环
-            budget -= read_cost;
-        }
-        // 清空末尾的 pass
-        while (!strategy.actions.empty() && strategy.actions.back().type == HeadActionType::PASS) {
-            strategy.actions.pop_back();
-        }
-        // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
-        if (!vaild_strategy || should_jmp[index[i]]) {
-            strategy.actions.clear();
-            // 跳转到收益最大的 slice 的可读取开头
-            double max_gain = 0;
-            int target_slice = 0;
-            for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-                if (disk.slice_margin_gain[slice_id] > max_gain) {
-                    max_gain = disk.slice_margin_gain[slice_id];
-                    target_slice = slice_id;
-                }
-            }
-            if (target_slice != 0) {
-                int target = disk.slice_start[target_slice];
-                while (disk.last_query_time.count(target) == 0) {
-                    target = mod(target, 1, global::V, 1);
-                }
-                strategy.add_action(HeadActionType::JUMP, target);
-            }
-        }
+        int disk_id = index[i];
+        Disk& disk = global::disks[disk_id];
+        head_strategies[disk_id] = simulate_strategy(disk_id);
+        HeadStrategy& strategy = head_strategies[disk_id];
         // 判断是否已经扫完块并且下一步是否要强制跳转
-        if (strategy.actions[0].type == HeadActionType::JUMP) {
-            should_jmp[index[i]] = 0;
-        } else if ((int)strategy.actions.size() + disk.head >= disk.slice_end[disk.slice_id[disk.head]]) {
-            should_jmp[index[i]] = 1;
+        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
+            should_jmp[disk_id] = 0;
+        } else if ((int)strategy.actions.size() + disk.head > disk.slice_end[disk.slice_id[disk.head]]) {
+            should_jmp[disk_id] = 1;
         }
         // 模拟磁头动作
         simulate_head(disk, strategy);
         // 如果是跳转的话，将该块对应的其他块的信息清空
-        if (strategy.actions[0].type == HeadActionType::JUMP) {
-            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]]; pos = mod(pos, 1, global::V, 1)) {
+        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
+            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]];
+                 pos++) {
                 ObjectBlock& block = disk.blocks[pos];
-                if (block.object_id == 0) continue;
+                if (block.object_id == 0 || !disk.last_query_time.count(pos)) continue;
                 Object& object = global::objects[block.object_id];
-                for (int d = 0; d < 3; d++) {
-                    Disk& diskt = global::disks[object.disk_id[d]];
+                for (int i = 0; i < 3; i++) {
+                    if (object.disk_id[i] == disk_id) {
+                        continue;
+                    }
+                    Disk& diskt = global::disks[object.disk_id[i]];
                     for (int j = 1; j <= object.size; j++) {
-                        diskt.clean_gain(object.block_id[d][j]);
+                        diskt.clean_gain(object.block_id[i][j]);
                     }
                 }
             }
@@ -453,7 +442,6 @@ inline void run() {
     io::init_input();
     init_local();
     io::init_output();
-    should_jmp.resize(global::N + 1, 0);
     for (global::timestamp = 1; global::timestamp <= global::T + 105; global::timestamp++) {
         // 时间片交互事件
         io::timestamp_align(global::timestamp);
@@ -476,6 +464,7 @@ inline void run() {
         auto read_objects = io::read_object_input();
         for (const auto& [req_id, object_id] : read_objects) {
             Object& object = global::objects[object_id];
+            object.tag = new_tag[object.tag];
             object.add_request(req_id);
             for (int i = 0; i < 3; i++) {
                 Disk& disk = global::disks[object.disk_id[i]];
