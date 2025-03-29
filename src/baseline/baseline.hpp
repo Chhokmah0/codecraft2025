@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <iomanip>
+#include <limits>
 #include <numeric>
 #include <vector>
 
@@ -130,7 +131,7 @@ inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
 inline int find_disk_with_tag(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
     int ans = -1;
     int max_empty_block_num = 0;
-    double max_similarity = 0;
+    double max_similarity = std::numeric_limits<double>::epsilon();
     for (auto [disk_id, slice_id] : disk_block) {
         Disk& disk = global::disks[disk_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
@@ -153,7 +154,7 @@ inline int find_disk_with_tag(const std::vector<std::pair<int, int>>& disk_block
 inline int find_disk(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
     int ans = -1;
     int max_empty_block_num = 0;
-    double max_similarity = 0;
+    double max_similarity = std::numeric_limits<double>::epsilon();
     for (auto [disk_id, slice_id] : disk_block) {
         Disk& disk = global::disks[disk_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
@@ -171,14 +172,30 @@ inline int find_disk(const std::vector<std::pair<int, int>>& disk_block, int siz
     return ans;
 }
 
-// 找出到相似度最大的 slice
+// 找出相似度最大的 slice
 inline int find_slice(int disk_id, int size, int tag) {
     const Disk& disk = global::disks[disk_id];
     int ans = -1;
     int max_empty_block_num = 0;
     double max_similarity = 0;
     for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-        int nxt_status = disk.slice_tag[slice_id];
+        if (disk.slice_empty_block_num[slice_id] >= size) {
+            if (similarity_with_slice(disk, slice_id, tag) > max_similarity && disk.slice_tag[slice_id] & (1 << tag)) {
+                max_similarity = similarity_with_slice(disk, slice_id, tag);
+                ans = slice_id;
+                max_empty_block_num = disk.slice_empty_block_num[slice_id];
+            } else if (similarity_with_slice(disk, slice_id, tag) == max_similarity &&
+                       disk.slice_tag[slice_id] & (1 << tag) &&
+                       disk.slice_empty_block_num[slice_id] > max_empty_block_num) {
+                ans = slice_id;
+                max_empty_block_num = disk.slice_empty_block_num[slice_id];
+            }
+        }
+    }
+    if (ans != -1) {
+        return ans;
+    }
+    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
         if (disk.slice_empty_block_num[slice_id] >= size) {
             if (similarity_with_slice(disk, slice_id, tag) > max_similarity) {
                 max_similarity = similarity_with_slice(disk, slice_id, tag);
