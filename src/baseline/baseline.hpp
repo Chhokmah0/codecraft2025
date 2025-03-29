@@ -169,6 +169,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         int time_block = std::min((global::timestamp - 1) / 1800 + 1, global::fre_len);
         int read_count_i = suffix_sum_read[objects[i].tag][time_block];
         int read_count_j = suffix_sum_read[objects[j].tag][time_block];
+        // FIXME: 这里的实现有点问题，但不知道为啥有用
         return std::tie(read_count_i, objects[i].tag, objects[i].size) <
                std::tie(read_count_j, objects[j].tag, objects[j].size);
     });
