@@ -125,80 +125,86 @@ inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
     }
     return block_id;
 }
-// 首先去所有slices里找拥有当前tag且slice里tag数量最少的，数量相同取剩余空间最大的，仍然相同就随机选一个
-int find_disk1(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
-    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
+
+// 找出包含 tag 且相似度最大的 slice 所在的 disk
+inline int find_disk_with_tag(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
+    int ans = -1;
+    int max_empty_block_num = 0;
+    double max_similarity = 0;
     for (auto [disk_id, slice_id] : disk_block) {
         Disk& disk = global::disks[disk_id];
-        int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) &&
-                (nxt_status & (1 << tag)) == (1 << tag)) {
-                now = disk_id;
-                now_status = nxt_status;
-                lst_size = disk.slice_empty_block_num[slice_id];
-            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
-                       (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size) {
-                now = disk_id;
-                now_status = nxt_status;
-                lst_size = disk.slice_empty_block_num[slice_id];
+            if (similarity_with_slice(disk, slice_id, tag) > max_similarity && disk.slice_tag[slice_id] & (1 << tag)) {
+                max_similarity = similarity_with_slice(disk, slice_id, tag);
+                ans = disk_id;
+                max_empty_block_num = disk.slice_empty_block_num[slice_id];
+            } else if (similarity_with_slice(disk, slice_id, tag) == max_similarity &&
+                       disk.slice_tag[slice_id] & (1 << tag) &&
+                       disk.slice_empty_block_num[slice_id] > max_empty_block_num) {
+                ans = disk_id;
+                max_empty_block_num = disk.slice_empty_block_num[slice_id];
             }
         }
     }
-    return now;
+    return ans;
 }
-// 在这个硬盘里找tag数量最少的slice，如果相同找剩余空间最大的，仍然相同就随机
-int find_disk2(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
-    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
+
+// 找出相似度最大的 slice 所在的 disk
+inline int find_disk(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
+    int ans = -1;
+    int max_empty_block_num = 0;
+    double max_similarity = 0;
     for (auto [disk_id, slice_id] : disk_block) {
         Disk& disk = global::disks[disk_id];
-        int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status)) {
-                now = disk_id;
-                now_status = nxt_status;
-                lst_size = disk.slice_empty_block_num[slice_id];
-            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
-                       disk.slice_empty_block_num[slice_id] > lst_size) {
-                now = disk_id;
-                now_status = nxt_status;
-                lst_size = disk.slice_empty_block_num[slice_id];
+            if (similarity_with_slice(disk, slice_id, tag) > max_similarity) {
+                max_similarity = similarity_with_slice(disk, slice_id, tag);
+                ans = disk_id;
+                max_empty_block_num = disk.slice_empty_block_num[slice_id];
+            } else if (similarity_with_slice(disk, slice_id, tag) == max_similarity &&
+                       disk.slice_empty_block_num[slice_id] > max_empty_block_num) {
+                ans = disk_id;
+                max_empty_block_num = disk.slice_empty_block_num[slice_id];
             }
         }
     }
-    return now;
+    return ans;
 }
-int find_slice(int disk_id, int size, int tag) {
+
+// 找出到相似度最大的 slice
+inline int find_slice(int disk_id, int size, int tag) {
     const Disk& disk = global::disks[disk_id];
-    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
+    int ans = -1;
+    int max_empty_block_num = 0;
+    double max_similarity = 0;
     for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
         int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) &&
-                (nxt_status & (1 << tag)) == (1 << tag))
-                now = slice_id, now_status = nxt_status, res = slice_id,
-                lst_size = disk.slice_empty_block_num[slice_id];
-            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
-                     (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size)
-                now = slice_id, now_status = nxt_status, res = slice_id,
-                lst_size = disk.slice_empty_block_num[slice_id];
+            if (similarity_with_slice(disk, slice_id, tag) > max_similarity) {
+                max_similarity = similarity_with_slice(disk, slice_id, tag);
+                ans = slice_id;
+                max_empty_block_num = disk.slice_empty_block_num[slice_id];
+            } else if (similarity_with_slice(disk, slice_id, tag) == max_similarity &&
+                       disk.slice_empty_block_num[slice_id] > max_empty_block_num) {
+                ans = slice_id;
+                max_empty_block_num = disk.slice_empty_block_num[slice_id];
+            }
         }
     }
-    if (res != -1) return res;
-    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-        int nxt_status = disk.slice_tag[slice_id];
-        if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
-                now = slice_id, now_status = nxt_status, res = slice_id,
-                lst_size = disk.slice_empty_block_num[slice_id];
-            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
-                     disk.slice_empty_block_num[slice_id] > lst_size)
-                now = slice_id, now_status = nxt_status, res = slice_id,
-                lst_size = disk.slice_empty_block_num[slice_id];
-        }
-    }
-    return res;
+    return ans;
 }
+
+// 找出一个空 slice
+inline int find_empty_slice(int disk_id) {
+    const Disk& disk = global::disks[disk_id];
+    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+        if (disk.slice_tag[slice_id] == 0) {
+            return slice_id;
+        }
+    }
+    return -1;  // 没有空的 slice
+}
+
 // 写入策略
 inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vector<ObjectWriteRequest>& objects) {
     std::vector<ObjectWriteStrategy> strategies(objects.size());
@@ -241,9 +247,9 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         // 选三次硬盘
         for (int i = 0; i < 3; i++) {
             std::vector<std::pair<int, int>> disk_block;
+            bool find_empty = false;
             int target_disk_id = -1;
             int target_slice_id = -1;
-            int max_empty_block_num = 0;
             for (auto disk_id : disk_ids) {
                 // 不能是已经用了的硬盘
                 if (strategy.is_used_disk(disk_id)) {
@@ -254,7 +260,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                     disk_block.push_back({disk_id, slice_id});
                 }
             }
-            target_disk_id = find_disk1(disk_block, object.size, object.tag);
+            target_disk_id = find_disk_with_tag(disk_block, object.size, object.tag);
 
             if (target_disk_id == -1) {  // 第一步没找到有这个tag的，去选空的slices最多的硬盘，空的数量相同随机选一个盘
                 int max_slice_num = 0;
@@ -284,10 +290,12 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                 }
                 // 优先空的块尽可能多的盘
                 // std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
-                if (max_slice_num > 0)
+                if (max_slice_num > 0) {
+                    find_empty = true;
                     target_disk_id = disk_list[global::rng() % disk_list.size()];
-                else  // 没有为空的硬盘，选tag最少的slice
-                    target_disk_id = find_disk2(disk_block, object.size, object.tag);
+                } else {  // 没有为空的硬盘，选相似度最高的 slice 所在的硬盘
+                    target_disk_id = find_disk(disk_block, object.size, object.tag);
+                }
             }
 
             if (target_disk_id == -1) {
@@ -296,12 +304,12 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             }
             // 选好了硬盘和 slice，开始放置
             strategy.disk_id[i] = target_disk_id;
-            target_slice_id = find_slice(strategy.disk_id[i], object.size, object.tag);
-            // if (target_disk_id % 2 == 1) {
+            if (find_empty) {
+                target_slice_id = find_empty_slice(target_disk_id);
+            } else {
+                target_slice_id = find_slice(target_disk_id, object.size, object.tag);
+            }
             strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
-            // } else {
-            //     strategy.block_id[i] = put_back(target_disk_id, target_slice_id, object.size);
-            // }
         }
 
         // 保证第二个硬盘上的顺序和第一个硬盘上不一样（put_back 本身就会反向放置）
@@ -320,8 +328,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
 }
 
 // 磁头移动策略
-
-HeadStrategy simulate_strategy(int disk_id) {
+inline HeadStrategy simulate_strategy(int disk_id) {
     Disk& disk = global::disks[disk_id];
     HeadStrategy strategy;
     if (disk.last_query_time.empty()) {
