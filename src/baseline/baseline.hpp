@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cassert>
+#include <iomanip>
+#include <numeric>
 #include <vector>
 
 #include "../io.hpp"
@@ -18,6 +20,7 @@ inline std::vector<std::vector<int>> local_disk_slice_p;
 inline std::vector<int> should_jmp;
 
 inline std::vector<std::vector<int>> suffix_sum_read;
+inline std::vector<std::vector<double>> similarity;
 
 inline void init_local() {
     global::disks.resize(global::N + 1, Disk(global::V, global::M));
@@ -38,6 +41,46 @@ inline void init_local() {
             suffix_sum_read[i][j - 1] += suffix_sum_read[i][j];
         }
     }
+
+    // 余弦相似度
+    similarity.resize(global::M + 1, std::vector<double>(global::M + 1));
+    for (int i = 1; i <= global::M; i++) {
+        for (int j = 1; j <= global::M; j++) {
+            double p = 0, lx = 0, ly = 0;
+            for (int k = 1; k <= global::fre_len; k++) {
+                p += (double)global::fre_read[i][k] * global::fre_read[j][k];
+                lx += (double)global::fre_read[i][k] * global::fre_read[i][k];
+                ly += (double)global::fre_read[j][k] * global::fre_read[j][k];
+            }
+            similarity[i][j] = p / std::sqrt(lx * ly);
+        }
+        similarity[i][i] = 1;  // 减少精度损失
+    }
+
+    // 调试输出
+    // std::cerr << "similarity: " << std::endl;
+    // for (int i = 1; i <= global::M; i++) {
+    //     for (int j = 1; j <= global::M; j++) {
+    //         std::cerr << std::fixed << std::setprecision(2) << similarity[i][j] << " ";
+    //     }
+    //     std::cerr << std::endl;
+    // }
+}
+
+inline double similarity_with_slice(const Disk& disk, int slice_id, int tag) {
+    size_t total_writed_num =
+        std::accumulate(disk.slice_tag_writed_num[slice_id].begin(), disk.slice_tag_writed_num[slice_id].end(), 0);
+    // 加权平均
+    double similarity_sum = 0;
+    for (int i = 1; i <= global::M; i++) {
+        if (disk.slice_tag_writed_num[slice_id][i] != 0) {
+            similarity_sum += (double)disk.slice_tag_writed_num[slice_id][i] / total_writed_num * similarity[tag][i];
+        }
+    }
+    return similarity_sum;
+}
+inline double similarity_with_slice(int disk_id, int slice_id, int tag) {
+    return similarity_with_slice(global::disks[disk_id], slice_id, tag);
 }
 
 inline int move_head(int disk_id, int slice_id, int p, int step) {
