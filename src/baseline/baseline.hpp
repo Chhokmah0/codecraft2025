@@ -214,7 +214,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             target_disk_id = find_disk1(disk_block, object.size, object.tag);
 
             if (target_disk_id == -1) {  // 第一步没找到有这个tag的，去选空的slices最多的硬盘，空的数量相同随机选一个盘
-                int max_block_num = 0;
+                int max_slice_num = 0;
                 std::vector<int> disk_list;
                 for (auto disk_id : disk_ids) {
                     // 不能是已经用了的硬盘
@@ -223,26 +223,26 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                     }
 
                     Disk& disk = global::disks[disk_id];
-                    int empty_block_num = 0;
+                    int empty_slice_num = 0;
                     for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
                         int status = disk.slice_tag[slice_id];
-                        if (status == 0) empty_block_num++;
+                        if (status == 0) empty_slice_num++;
                         // if (disk.slice_empty_block_num[slice_id] >= object.size) {
                         //     empty_block_num += disk.slice_empty_block_num[slice_id];
                         // }待尝试的方向
                     }
-                    if (empty_block_num > max_block_num) {
-                        max_block_num = empty_block_num;
+                    if (empty_slice_num > max_slice_num) {
+                        max_slice_num = empty_slice_num;
                         disk_list.clear();
                     }
-                    if (empty_block_num == max_block_num) {
+                    if (empty_slice_num == max_slice_num) {
                         disk_list.push_back(disk_id);
                     }
                 }
                 // 优先空的块尽可能多的盘
                 // std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
-                if (max_block_num > 0)
-                    target_disk_id = disk_list[(long long)global::rng() % disk_list.size()];
+                if (max_slice_num > 0)
+                    target_disk_id = disk_list[global::rng() % disk_list.size()];
                 else  // 没有为空的硬盘，选tag最少的slice
                     target_disk_id = find_disk2(disk_block, object.size, object.tag);
             }
@@ -278,12 +278,13 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
 
 // 磁头移动策略
 
-int simulate_strategy(int disk_id) {
+HeadStrategy simulate_strategy(int disk_id) {
     Disk& disk = global::disks[disk_id];
-    int read_count = 0;
+    HeadStrategy strategy;
     if (disk.last_query_time.empty()) {
-        return 0;
+        return strategy;
     }
+    // 考虑某个磁头的策略
     int head = disk.head;
     HeadActionType pre_action = disk.pre_action;
     int pre_action_cost = disk.pre_action_cost;
@@ -291,8 +292,9 @@ int simulate_strategy(int disk_id) {
     bool vaild_strategy = false;
 
     while (budget != 0) {
+        // 优先使用 read 操作
         const int READ_BUDGET = 150;  // NOTE: 直到有效的 read 操作前可以使用的 token 数
-        int pre_count = read_count;
+        int pre_size = strategy.actions.size();
         int pre_head = head;
         int read_budget = std::min(READ_BUDGET, budget);
         int read_cost = 0;
@@ -302,7 +304,7 @@ int simulate_strategy(int disk_id) {
         }
         bool vaild_read = false;
         while (read_budget >= read_cost + step_read_cost) {
-            read_count++;
+            strategy.add_action(HeadActionType::READ);
             pre_action = HeadActionType::READ;
             pre_action_cost = step_read_cost;
             read_cost += step_read_cost;
@@ -313,17 +315,21 @@ int simulate_strategy(int disk_id) {
                 break;
             }
             head = mod(head, 1, global::V, 1);
+            // 如果转了一圈，跳出
             if (head == disk.head) {
                 break;
             }
         }
+        // 如果转了一圈，跳出
         if (head == disk.head) {
             break;
         }
         if (!vaild_read) {
-            read_count = pre_count;
+            // 如果没有有效的 read，清空 read 操作，改成 pass 操作
+            strategy.actions.resize(pre_size);
             head = pre_head;
             while (budget > 0) {
+                strategy.add_action(HeadActionType::PASS);
                 budget--;
                 head = mod(head, 1, global::V, 1);
                 pre_action = HeadActionType::PASS;
@@ -334,9 +340,34 @@ int simulate_strategy(int disk_id) {
             }
             continue;
         }
+        // 如果有有效的 read，维护信息，继续下一次循环
         budget -= read_cost;
     }
-    return read_count;
+    // 清空末尾的 pass
+    while (!strategy.actions.empty() && strategy.actions.back().type == HeadActionType::PASS) {
+        strategy.actions.pop_back();
+    }
+    // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
+    if (!vaild_strategy || should_jmp[disk_id]) {
+        strategy.actions.clear();
+        // 跳转到收益最大的 slice 的可读取开头
+        double max_gain = 0;
+        int target_slice = 0;
+        for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
+            if (disk.slice_margin_gain[slice_id] > max_gain) {
+                max_gain = disk.slice_margin_gain[slice_id];
+                target_slice = slice_id;
+            }
+        }
+        if (target_slice != 0) {
+            int target = disk.slice_start[target_slice];
+            while (disk.last_query_time.count(target) == 0) {
+                target = mod(target, 1, global::V, 1);
+            }
+            strategy.add_action(HeadActionType::JUMP, target);
+        }
+    }
+    return strategy;
 }
 
 inline std::vector<HeadStrategy> head_strategy_function() {
@@ -350,7 +381,10 @@ inline std::vector<HeadStrategy> head_strategy_function() {
     std::vector<int> simulate_read_time(global::N + 1);
     // 先按照已有策略模拟一次，然后再按照读取次数排序
     for (int i = 1; i <= global::N; i++) {
-        simulate_read_time[i] = simulate_strategy(i);
+        HeadStrategy strategy = simulate_strategy(i);
+        simulate_read_time[i] =
+            std::count_if(strategy.actions.begin(), strategy.actions.end(),
+                          [](const HeadAction& action) { return action.type == HeadActionType::READ; });
     }
 
     std::sort(index.begin() + 1, index.end(),
@@ -358,103 +392,18 @@ inline std::vector<HeadStrategy> head_strategy_function() {
     for (int i = 1; i <= global::N; i++) {
         int disk_id = index[i];
         Disk& disk = global::disks[disk_id];
+        head_strategies[disk_id] = simulate_strategy(disk_id);
         HeadStrategy& strategy = head_strategies[disk_id];
-        if (disk.last_query_time.empty()) {
-            continue;
-        }
-        // 考虑某个磁头的策略
-        int head = disk.head;
-        HeadActionType pre_action = disk.pre_action;
-        int pre_action_cost = disk.pre_action_cost;
-        int budget = global::G;
-        bool vaild_strategy = false;
-
-        while (budget != 0) {
-            // 优先使用 read 操作
-            const int READ_BUDGET = 150;  // NOTE: 直到有效的 read 操作前可以使用的 token 数
-            int pre_size = strategy.actions.size();
-            int pre_head = head;
-            int read_budget = std::min(READ_BUDGET, budget);
-            int read_cost = 0;
-            int step_read_cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
-            if (step_read_cost > read_budget) {
-                break;
-            }
-            bool vaild_read = false;
-            while (read_budget >= read_cost + step_read_cost) {
-                strategy.add_action(HeadActionType::READ);
-                pre_action = HeadActionType::READ;
-                pre_action_cost = step_read_cost;
-                read_cost += step_read_cost;
-                if (disk.last_query_time.count(head)) {
-                    vaild_read = true;
-                    vaild_strategy = true;
-                    head = mod(head, 1, global::V, 1);
-                    break;
-                }
-                head = mod(head, 1, global::V, 1);
-                // 如果转了一圈，跳出
-                if (head == disk.head) {
-                    break;
-                }
-            }
-            // 如果转了一圈，跳出
-            if (head == disk.head) {
-                break;
-            }
-            if (!vaild_read) {
-                // 如果没有有效的 read，清空 read 操作，改成 pass 操作
-                strategy.actions.resize(pre_size);
-                head = pre_head;
-                while (budget > 0) {
-                    strategy.add_action(HeadActionType::PASS);
-                    budget--;
-                    head = mod(head, 1, global::V, 1);
-                    pre_action = HeadActionType::PASS;
-                    pre_action_cost = 1;
-                    if (disk.last_query_time.count(head)) {
-                        break;
-                    }
-                }
-                continue;
-            }
-            // 如果有有效的 read，维护信息，继续下一次循环
-            budget -= read_cost;
-        }
-        // 清空末尾的 pass
-        while (!strategy.actions.empty() && strategy.actions.back().type == HeadActionType::PASS) {
-            strategy.actions.pop_back();
-        }
-        // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
-        if (!vaild_strategy || should_jmp[disk_id]) {
-            strategy.actions.clear();
-            // 跳转到收益最大的 slice 的可读取开头
-            double max_gain = 0;
-            int target_slice = 0;
-            for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-                if (disk.slice_margin_gain[slice_id] > max_gain) {
-                    max_gain = disk.slice_margin_gain[slice_id];
-                    target_slice = slice_id;
-                }
-            }
-            if (target_slice != 0) {
-                int target = disk.slice_start[target_slice];
-                while (disk.last_query_time.count(target) == 0) {
-                    target = mod(target, 1, global::V, 1);
-                }
-                strategy.add_action(HeadActionType::JUMP, target);
-            }
-        }
         // 判断是否已经扫完块并且下一步是否要强制跳转
-        if (strategy.actions[0].type == HeadActionType::JUMP) {
+        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
             should_jmp[disk_id] = 0;
-        } else if ((int)strategy.actions.size() + disk.head >= disk.slice_end[disk.slice_id[disk.head]]) {
+        } else if ((int)strategy.actions.size() + disk.head > disk.slice_end[disk.slice_id[disk.head]]) {
             should_jmp[disk_id] = 1;
         }
         // 模拟磁头动作
         simulate_head(disk, strategy);
         // 如果是跳转的话，将该块对应的其他块的信息清空
-        if (strategy.actions[0].type == HeadActionType::JUMP) {
+        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
             for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]];
                  pos++) {
                 ObjectBlock& block = disk.blocks[pos];
