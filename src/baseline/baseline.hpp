@@ -1,8 +1,11 @@
 #pragma once
 
 #include <algorithm>
+#include <array>
 #include <cassert>
+#include <functional>
 #include <iomanip>
+#include <iterator>
 #include <numeric>
 #include <vector>
 
@@ -327,71 +330,119 @@ HeadStrategy simulate_strategy(int disk_id) {
     if (disk.last_query_time.empty()) {
         return strategy;
     }
-    // 考虑某个磁头的策略
-    int head = disk.head;
-    HeadActionType pre_action = disk.pre_action;
-    int pre_action_cost = disk.pre_action_cost;
-    int budget = global::G;
-    bool vaild_strategy = false;
+    // 第 n 次 READ 时所消耗的令牌，第 8 次往后都是 16
+    // 0 是 PASS 时的消耗
+    const int COST[] = {1, 64, 52, 42, 34, 28, 23, 19, 16};
+    const int COST_SIZE = sizeof(COST) / sizeof(int);
+    // debug
+    if (global::timestamp == 4916 && disk_id == 4) {
+        int stop = 0;
+    }
 
-    while (budget != 0) {
-        // 优先使用 read 操作
-        const int READ_BUDGET = 150;  // NOTE: 直到有效的 read 操作前可以使用的 token 数
-        int pre_size = strategy.actions.size();
-        int pre_head = head;
-        int read_budget = std::min(READ_BUDGET, budget);
-        int read_cost = 0;
-        int step_read_cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
-        if (step_read_cost > read_budget) {
-            break;
-        }
-        bool vaild_read = false;
-        while (read_budget >= read_cost + step_read_cost) {
-            strategy.add_action(HeadActionType::READ);
-            pre_action = HeadActionType::READ;
-            pre_action_cost = step_read_cost;
-            read_cost += step_read_cost;
-            if (disk.last_query_time.count(head)) {
-                vaild_read = true;
-                vaild_strategy = true;
-                head = mod(head, 1, global::V, 1);
-                break;
+    // 动态规划
+    // dp[i][j] 表示磁头在位置 i 时，使用第 j 次 READ 后的最大剩余令牌
+    std::vector<std::array<int, COST_SIZE>> dp;
+    std::vector<std::array<int, COST_SIZE>> pre_read_count;
+    for (int i = 0, p = disk.head; i <= global::V; i++) {
+        dp.push_back(std::array<int, COST_SIZE>());
+        dp.back().fill(-1);
+        pre_read_count.push_back(std::array<int, COST_SIZE>());
+        pre_read_count.back().fill(0);
+        // 开始处的处理
+        if (i == 0) {
+            int read_count;
+            if (disk.pre_action == HeadActionType::READ) {
+                read_count =
+                    std::lower_bound(std::begin(COST) + 1, std::end(COST), disk.pre_action_cost, std::greater<int>()) -
+                    COST;
+            } else {
+                read_count = 0;
             }
-            head = mod(head, 1, global::V, 1);
-            // 如果转了一圈，跳出
-            if (head == disk.head) {
-                break;
+            if (disk.last_query_time.count(p) == 0) {
+                // 磁头在空闲块上时才可以 PASS
+                dp[0][0] = global::G - 1;
+                pre_read_count[0][0] = read_count;
             }
-        }
-        // 如果转了一圈，跳出
-        if (head == disk.head) {
-            break;
-        }
-        if (!vaild_read) {
-            // 如果没有有效的 read，清空 read 操作，改成 pass 操作
-            strategy.actions.resize(pre_size);
-            head = pre_head;
-            while (budget > 0) {
-                strategy.add_action(HeadActionType::PASS);
-                budget--;
-                head = mod(head, 1, global::V, 1);
-                pre_action = HeadActionType::PASS;
-                pre_action_cost = 1;
-                if (disk.last_query_time.count(head)) {
-                    break;
-                }
+            // READ 操作
+            if (read_count == COST_SIZE - 1) {
+                dp[0][read_count] = global::G - COST[read_count];
+                pre_read_count[0][read_count] = read_count;
+            } else {
+                dp[0][read_count + 1] = global::G - COST[read_count + 1];
+                pre_read_count[0][read_count + 1] = read_count;
             }
+            p = mod(p, 1, global::V, 1);
             continue;
         }
-        // 如果有有效的 read，维护信息，继续下一次循环
-        budget -= read_cost;
+
+        // 计算 dp[i][j]
+        if (disk.last_query_time.count(p) == 0) {
+            // 磁头在空闲块上时才可以 PASS
+            int max_budget_read_count = std::max_element(dp[i - 1].begin(), dp[i - 1].end()) - dp[i - 1].begin();
+            int max_budget = dp[i - 1][max_budget_read_count];
+            if (max_budget != 0) {
+                if (max_budget - COST[0] > dp[i][0]) {
+                    dp[i][0] = max_budget - COST[0];
+                    pre_read_count[i][0] = max_budget_read_count;
+                }
+            }
+        }
+        // READ 操作
+        for (int j = 0; j < COST_SIZE; j++) {
+            if (dp[i - 1][j] == -1) continue;
+            if (j == COST_SIZE - 1) {
+                if (dp[i-1][j] - COST[j] > dp[i][j]) {
+                    dp[i][j] = dp[i - 1][j] - COST[j];
+                    pre_read_count[i][j] = j;
+                }
+            } else {
+                if (dp[i - 1][j] - COST[j + 1] > dp[i][j + 1]) {
+                    dp[i][j + 1] = dp[i - 1][j] - COST[j + 1];
+                    pre_read_count[i][j + 1] = j;
+                }
+            }
+        }
+        if (std::all_of(dp[i].begin(), dp[i].end(), [](int x) { return x == -1; })) {
+            // 如果所有的 dp[i][j] 都是 -1，说明没有可用的令牌
+            dp.pop_back();
+            pre_read_count.pop_back();
+            break;
+        }
+        p = mod(p, 1, global::V, 1);
     }
+    // 获取 dp 的方案
+    if (!dp.empty()) {
+        int dp_p = dp.size() - 1;
+        int dp_j = std::max_element(dp.back().begin(), dp.back().end()) - dp.back().begin();
+        while (dp_p >= 0) {
+            if (dp_j == 0) {
+                strategy.add_action(HeadActionType::PASS);
+            } else {
+                strategy.add_action(HeadActionType::READ);
+            }
+            dp_j = pre_read_count[dp_p][dp_j];
+            dp_p--;
+        }
+        std::reverse(strategy.actions.begin(), strategy.actions.end());
+    }
+
     // 清空末尾的 pass
     while (!strategy.actions.empty() && strategy.actions.back().type == HeadActionType::PASS) {
         strategy.actions.pop_back();
     }
+    // 检测是否有有效的 read
+    bool valid_strategy = false;
+    int p = disk.head;
+    for (const auto& action : strategy.actions) {
+        if (action.type == HeadActionType::READ && disk.last_query_time.count(p) != 0) {
+            valid_strategy = true;
+            break;
+        }
+        p = mod(p, 1, global::V, 1);
+    }
+
     // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
-    if (!vaild_strategy || should_jmp[disk_id]) {
+    if (!valid_strategy || should_jmp[disk_id]) {
         strategy.actions.clear();
         // 跳转到收益最大的 slice 的可读取开头
         double max_gain = 0;
