@@ -266,7 +266,7 @@ class Disk {
         assert(object.object_id != 0);
         slice_margin_gain[slice_id[index]] -= margin_gain[index];
         total_margin_gain -= margin_gain[index];
-        margin_gain[index] = 0.999 * margin_gain[index];
+        margin_gain[index] = 0.998 * margin_gain[index];
         // margin_gain[index] += 0.01 * start_margin_gain[index];
         slice_margin_gain[slice_id[index]] += margin_gain[index];
         total_margin_gain += margin_gain[index];
