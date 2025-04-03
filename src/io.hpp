@@ -2,6 +2,7 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
+#include <array>
 
 #include "global.hpp"
 #include "structures.hpp"
@@ -99,12 +100,12 @@ inline std::vector<ObjectReadRequest> read_object_input() {
     return read_objects;
 }
 
-inline void read_object_output(const std::vector<HeadStrategy>& head_strategies,
+inline void read_object_output(const std::vector<std::array<HeadStrategy, 2>>& head_strategies,
                                const std::vector<int>& completed_requests) {
     for (int i = 1; i <= global::N; i++) {
-        std::cout << head_strategies[i] << '\n';
-        // TODO：临时写法，让两个磁头的策略相同
-        std::cout << head_strategies[i] << '\n';
+        for(int j = 0; j < 2; j++) {
+           std::cout << head_strategies[i][j] << '\n';
+        }
     }
     std::cout << completed_requests.size() << '\n';
     for (auto req_id : completed_requests) {

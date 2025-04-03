@@ -95,10 +95,10 @@ class Disk {
     double total_margin_gain;               // 总的查询收益
     int empty_block_num;                    // 空余的块数量
 
-    int head;  // 磁头的位置
-    int v;     // 磁盘的总大小
-    HeadActionType pre_action;
-    int pre_action_cost;
+    int head[2];  // 磁头的位置
+    int v;        // 磁盘的总大小
+    HeadActionType pre_action[2];
+    int pre_action_cost[2];
 
     int slice_size;  // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
     int slice_num;
@@ -125,10 +125,10 @@ class Disk {
           total_query_num(0),
           total_margin_gain(0),
           empty_block_num(v),
-          head(1),
+          head{1, 1},
           v(v),
-          pre_action(HeadActionType::JUMP),
-          pre_action_cost(0),
+          pre_action{HeadActionType::JUMP, HeadActionType::JUMP},
+          pre_action_cost{0, 0},
           slice_size((v + m - 1) / m),
           slice_num((v - 1) / slice_size + 1),
           slice_id(v + 1),
@@ -160,10 +160,10 @@ class Disk {
           total_query_num(0),
           total_margin_gain(0),
           empty_block_num(v),
-          head(1),
+          head{1, 1},
           v(v),
-          pre_action(HeadActionType::JUMP),
-          pre_action_cost(0),
+          pre_action{HeadActionType::JUMP, HeadActionType::JUMP},
+          pre_action_cost{0, 0},
           slice_size(slice_size),
           slice_num((v - 1) / slice_size + 1),
           slice_id(v + 1),
