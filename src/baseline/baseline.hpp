@@ -474,7 +474,7 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
                 for (int pos = strategy.actions[0].target;
                      pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]]; pos++) {
                     ObjectBlock& block = disk.blocks[pos];
-                    if (block.object_id == 0 || disk.query_num[pos] == 0 || disk.margin_gain[pos] == 0) continue;
+                    if (block.object_id == 0 || disk.query_num[pos] == 0) continue;
                     Object& object = global::objects[block.object_id];
                     object.clean_gain();
                     for (int i = 0; i < 3; i++) {
