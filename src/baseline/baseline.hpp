@@ -266,7 +266,8 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                     }
                 }
                 // 优先空的块尽可能多的盘
-                // std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
+                std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
+                std::shuffle(disk_block.begin(), disk_block.end(), global::rng);
                 if (max_slice_num > 0)
                     target_disk_id = disk_list[global::rng() % disk_list.size()];
                 else  // 没有为空的硬盘，选tag最少的slice
@@ -443,51 +444,53 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
 // 具体的磁头策略，需要维护 disk 的状态
 inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
     std::vector<std::array<HeadStrategy, 2>> head_strategies(global::N + 1);
-    std::vector<int> index(global::N + 1);
+    std::vector<int> index(2 * global::N + 1);
     std::iota(index.begin(), index.end(), 0);
     // 优先模拟收益较小的磁盘，此时收益较大的磁盘仍然具有收益，因此可以保证负载均衡
     // std::sort(index.begin() + 1, index.end(),
     //           [&](int i, int j) { return global::disks[i].total_margin_gain < global::disks[j].total_margin_gain; });
     // 貌似干不过随机？
-    // std::vector<int> simulate_read_time(global::N + 1);
-    // // 先按照已有策略模拟一次，然后再按照读取次数排序
-    // for (int i = 1; i <= global::N; i++) {
-    //     HeadStrategy strategy = simulate_strategy(i);
-    //     simulate_read_time[i] =
-    //         std::count_if(strategy.actions.begin(), strategy.actions.end(),
-    //                       [](const HeadAction& action) { return action.type == HeadActionType::READ; });
-    // }
-
-    // std::sort(index.begin() + 1, index.end(),
-    //           [&simulate_read_time](int i, int j) { return simulate_read_time[i] > simulate_read_time[j]; });
+    std::vector<int> simulate_read_time(2 * global::N + 1);
+    // 先按照已有策略模拟一次，然后再按照读取次数排序
     for (int i = 1; i <= global::N; i++) {
-        for (int head_id = 0; head_id < 2; head_id++) {
-            int disk_id = index[i];
-            Disk& disk = global::disks[disk_id];
-            head_strategies[disk_id][head_id] = simulate_strategy(disk_id, head_id);
-            HeadStrategy& strategy = head_strategies[disk_id][head_id];
-            // 判断是否已经扫完块并且下一步是否要强制跳转
-            if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
-                should_jmp[disk_id][head_id] = false;
-            } else if ((int)strategy.actions.size() + disk.head[head_id] >
-                       disk.slice_end[disk.slice_id[disk.head[head_id]]]) {
-                should_jmp[disk_id][head_id] = true;
-            }
-            // 模拟磁头动作
-            simulate_head(disk, head_id, strategy);
-            // 如果是跳转的话，将该块对应的其他块的信息清空
-            if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
-                for (int pos = strategy.actions[0].target;
-                     pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]]; pos++) {
-                    ObjectBlock& block = disk.blocks[pos];
-                    if (block.object_id == 0 || disk.query_num[pos] == 0) continue;
-                    Object& object = global::objects[block.object_id];
-                    object.clean_gain();
-                    for (int i = 0; i < 3; i++) {
-                        Disk& diskt = global::disks[object.disk_id[i]];
-                        for (int j = 1; j <= object.size; j++) {
-                            diskt.clean_gain(object.block_id[i][j]);
-                        }
+        HeadStrategy strategy1 = simulate_strategy(i, 0), strategy2 = simulate_strategy(i, 1);
+        simulate_read_time[i] =
+            std::count_if(strategy1.actions.begin(), strategy1.actions.end(),
+                          [](const HeadAction& action) { return action.type == HeadActionType::READ; });
+        simulate_read_time[i + global::N] = std::count_if(strategy2.actions.begin(), strategy2.actions.end(),
+                                                          [](const HeadAction& action) { return action.type == HeadActionType::READ; });
+    }
+
+    std::sort(index.begin() + 1, index.end(),
+              [&simulate_read_time](int i, int j) { return simulate_read_time[i] > simulate_read_time[j]; });
+    for (int i = 1; i <= 2 * global::N; i++) {
+        // for (int head_id = 0; head_id < 2; head_id++) {
+        int disk_id = index[i] > global::N ? index[i] - global::N : index[i];
+        int head_id = index[i] > global::N ? 1 : 0;
+        Disk& disk = global::disks[disk_id];
+        head_strategies[disk_id][head_id] = simulate_strategy(disk_id, head_id);
+        HeadStrategy& strategy = head_strategies[disk_id][head_id];
+        // 判断是否已经扫完块并且下一步是否要强制跳转
+        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
+            should_jmp[disk_id][head_id] = false;
+        } else if ((int)strategy.actions.size() + disk.head[head_id] >
+                   disk.slice_end[disk.slice_id[disk.head[head_id]]]) {
+            should_jmp[disk_id][head_id] = true;
+        }
+        // 模拟磁头动作
+        simulate_head(disk, head_id, strategy);
+        // 如果是跳转的话，将该块对应的其他块的信息清空
+        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
+            for (int pos = strategy.actions[0].target;
+                 pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]]; pos++) {
+                ObjectBlock& block = disk.blocks[pos];
+                if (block.object_id == 0 || disk.query_num[pos] == 0) continue;
+                Object& object = global::objects[block.object_id];
+                object.clean_gain();
+                for (int i = 0; i < 3; i++) {
+                    Disk& diskt = global::disks[object.disk_id[i]];
+                    for (int j = 1; j <= object.size; j++) {
+                        diskt.clean_gain(object.block_id[i][j]);
                     }
                 }
             }

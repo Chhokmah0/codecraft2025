@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG -finline-functions -fwhole-program -ftree-vectorize -flto -funroll-loops -falign-loops -march=native -Wall -Wextra -pedantic CMakeFiles/code_craft.dir/src/main.cpp.o -o code_craft 

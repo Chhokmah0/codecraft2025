@@ -153,7 +153,7 @@ class Disk {
         refactor_num.resize(slice_size + 1);
         refactor_num[0] = 1;
         for (int i = 1; i <= slice_size; ++i) {
-            refactor_num[i] = 0.998 * refactor_num[i - 1];
+            refactor_num[i] = 0.999 * refactor_num[i - 1];
         }
     }
 
