@@ -319,7 +319,7 @@ class Disk {
         assert(object.object_id != 0);
         double gain = (double)(object.object_size + 1) / object.object_size;
         start_margin_gain[block_index] -= gain;
-        gain *= gain * GAIN_MULT[passed_time];
+        gain *= GAIN_MULT[passed_time];
         margin_gain[block_index] -= gain;
         slice_margin_gain[slice_id[block_index]] -= gain;
         total_margin_gain -= gain;
