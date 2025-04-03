@@ -1,10 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cassert>
 #include <deque>
 #include <iterator>
 #include <limits>
-#include <map>
 #include <ostream>
 #include <set>
 #include <string>
@@ -12,6 +12,17 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+constexpr double ALPHA = 0.998;
+constexpr auto generate_gain_mult() {
+    std::array<double, 120> GAIN_MULT = {};
+    for (size_t i = 0; i < GAIN_MULT.size(); ++i) {
+        GAIN_MULT[i] = (i == 0) ? 1.0 : GAIN_MULT[i - 1] * ALPHA;
+    }
+    return GAIN_MULT;
+}
+
+constexpr auto GAIN_MULT = generate_gain_mult();
 
 struct ObjectWriteRequest {
     int id;
@@ -277,7 +288,7 @@ class Disk {
         assert(object.object_id != 0);
         slice_margin_gain[slice_id[index]] -= margin_gain[index];
         total_margin_gain -= margin_gain[index];
-        margin_gain[index] = 0.998 * margin_gain[index];
+        margin_gain[index] = ALPHA * margin_gain[index];
         // margin_gain[index] += 0.01 * start_margin_gain[index];
         slice_margin_gain[slice_id[index]] += margin_gain[index];
         total_margin_gain += margin_gain[index];
@@ -299,10 +310,7 @@ class Disk {
             return;
         }
         clean_query(block_index);
-        slice_margin_gain[slice_id[block_index]] -= margin_gain[block_index];
-        total_margin_gain -= margin_gain[block_index];
-        margin_gain[block_index] = 0;
-        start_margin_gain[block_index] = 0;
+        clean_gain(block_index);
     }
 
     // 降低当前 block 的贡献
@@ -311,9 +319,7 @@ class Disk {
         assert(object.object_id != 0);
         double gain = (double)(object.object_size + 1) / object.object_size;
         start_margin_gain[block_index] -= gain;
-        while (passed_time--) {
-            gain *= 0.998;
-        }
+        gain *= gain * GAIN_MULT[passed_time];
         margin_gain[block_index] -= gain;
         slice_margin_gain[slice_id[block_index]] -= gain;
         total_margin_gain -= gain;
@@ -427,6 +433,9 @@ class Object {
         }
         for (auto req_id : completed_requests) {
             read_requests.erase(req_id);
+            if (unclean_gain_requests.count(req_id)) {
+                unclean_gain_requests.erase(req_id);
+            }
         }
         return completed_requests;
     }
