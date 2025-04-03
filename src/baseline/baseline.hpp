@@ -1,7 +1,6 @@
 #pragma once
 
 #include <algorithm>
-#include <array>
 #include <cassert>
 #include <functional>
 #include <iomanip>
@@ -108,8 +107,8 @@ inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
     return block_id;
 }
 // 首先去所有slices里找拥有当前tag且slice里tag数量最少的，数量相同取剩余空间最大的，仍然相同就随机选一个
-int find_disk1(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
-    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
+inline int find_disk1(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
+    int now = -1, now_status = 2147483647, lst_size = -1;
     for (auto [disk_id, slice_id] : disk_block) {
         Disk& disk = global::disks[disk_id];
         int nxt_status = disk.slice_tag[slice_id];
@@ -130,8 +129,8 @@ int find_disk1(const std::vector<std::pair<int, int>>& disk_block, int size, int
     return now;
 }
 // 在这个硬盘里找tag数量最少的slice，如果相同找剩余空间最大的，仍然相同就随机
-int find_disk2(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
-    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
+inline int find_disk2(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
+    int now = -1, now_status = 2147483647, lst_size = -1;
     for (auto [disk_id, slice_id] : disk_block) {
         Disk& disk = global::disks[disk_id];
         int nxt_status = disk.slice_tag[slice_id];
@@ -150,9 +149,9 @@ int find_disk2(const std::vector<std::pair<int, int>>& disk_block, int size, int
     }
     return now;
 }
-int find_slice(int disk_id, int size, int tag) {
+inline int find_slice(int disk_id, int size, int tag) {
     const Disk& disk = global::disks[disk_id];
-    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
+    int now = 0, now_status = 2147483647, res = -1, lst_size = -1;
     for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
         int nxt_status = disk.slice_tag[slice_id];
         if (disk.slice_empty_block_num[slice_id] >= size) {
@@ -226,7 +225,6 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             std::vector<std::pair<int, int>> disk_block;
             int target_disk_id = -1;
             int target_slice_id = -1;
-            int max_empty_block_num = 0;
             for (auto disk_id : disk_ids) {
                 // 不能是已经用了的硬盘
                 if (strategy.is_used_disk(disk_id)) {
@@ -493,6 +491,7 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
                         diskt.clean_gain(object.block_id[i][j]);
                     }
                 }
+                assert(std::abs(disk.slice_margin_gain[disk.slice_id[strategy.actions[0].target]]) <= 1e-10);
             }
         }
     }

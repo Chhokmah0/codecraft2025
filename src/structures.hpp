@@ -1,10 +1,10 @@
 #pragma once
 
+#include <array>
 #include <cassert>
 #include <deque>
 #include <iterator>
 #include <limits>
-#include <map>
 #include <ostream>
 #include <set>
 #include <string>
@@ -12,6 +12,17 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+
+constexpr double ALPHA = 0.998;
+constexpr auto generate_gain_mult() {
+    std::array<double, 120> GAIN_MULT = {};
+    for (size_t i = 0; i < GAIN_MULT.size(); ++i) {
+        GAIN_MULT[i] = (i == 0) ? 1.0 : GAIN_MULT[i - 1] * ALPHA;
+    }
+    return GAIN_MULT;
+}
+
+constexpr auto GAIN_MULT = generate_gain_mult();
 
 struct ObjectWriteRequest {
     int id;
@@ -21,7 +32,7 @@ struct ObjectWriteRequest {
 
 struct ObjectWriteStrategy {
     ObjectWriteRequest object;
-    int disk_id[3];                // 三个副本的目标硬盘
+    int disk_id[3];  // 三个副本的目标硬盘
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意 object 的块和硬盘上的块都是从 1
                                    // 开始编号的，block_id[0] 不使用。
 
@@ -102,13 +113,13 @@ class Disk {
 
     int slice_size;  // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
     int slice_num;
-    std::vector<int> slice_id;                           // slice_id[block_index] 表示这个位置被分到第几个块
-    std::vector<int> slice_tag;                          // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
-    std::vector<int> slice_last_tag;                     // slice 中最新的 tag
+    std::vector<int> slice_id;        // slice_id[block_index] 表示这个位置被分到第几个块
+    std::vector<int> slice_tag;       // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
+    std::vector<int> slice_last_tag;  // slice 中最新的 tag
     std::vector<std::vector<int>> slice_tag_writed_num;  // slice 中每个 tag 的块数量
     std::vector<int> slice_empty_block_num;              // 每个 slice 中空闲的块数量
     std::vector<int> slice_start,
-        slice_end;                          // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
+        slice_end;  // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
     std::vector<int> slice_query_num;       // 每个 slice 中的查询个数
     std::vector<double> slice_margin_gain;  // 每个 slice 中的剩余查询收益
 
@@ -381,12 +392,12 @@ class Object {
     int id;
     int size;
     int tag;
-    int disk_id[3];                // 三个副本的目标硬盘
+    int disk_id[3];  // 三个副本的目标硬盘
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
    private:
     std::deque<ObjectReadTime> read_queue;  // 读取请求的队列，存储的是请求的编号和时间戳
     std::unordered_set<int>
-        unclean_gain_requests;                                // 没有被清理掉贡献的请求，注意这里的请求可能已经被完成，因此只应该用于判断，不应该用于枚举
+        unclean_gain_requests;  // 没有被清理掉贡献的请求，注意这里的请求可能已经被完成，因此只应该用于判断，不应该用于枚举
     std::unordered_map<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
     std::vector<int> request_number;                          // 第 i 个分块上的未完成请求数量
    public:
@@ -430,6 +441,9 @@ class Object {
         }
         for (auto req_id : completed_requests) {
             read_requests.erase(req_id);
+            if (unclean_gain_requests.count(req_id)) {
+                unclean_gain_requests.erase(req_id);
+            }
         }
         return completed_requests;
     }
