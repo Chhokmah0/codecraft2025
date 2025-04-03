@@ -2,14 +2,15 @@
 #include <cassert>
 #include <iostream>
 #include <vector>
+#include <array>
 
 #include "global.hpp"
 #include "structures.hpp"
 
 namespace io {
 inline void init_input() {
-    std::cin >> global::T >> global::M >> global::N >> global::V >> global::G;
-    
+    std::cin >> global::T >> global::M >> global::N >> global::V >> global::G >> global::K;
+
     global::fre_len = (global::T + 1799) / 1800;
     global::fre_del.resize(global::M + 1);
     for (int i = 1; i <= global::M; i++) {
@@ -99,10 +100,12 @@ inline std::vector<ObjectReadRequest> read_object_input() {
     return read_objects;
 }
 
-inline void read_object_output(const std::vector<HeadStrategy>& head_strategies,
+inline void read_object_output(const std::vector<std::array<HeadStrategy, 2>>& head_strategies,
                                const std::vector<int>& completed_requests) {
     for (int i = 1; i <= global::N; i++) {
-        std::cout << head_strategies[i] << '\n';
+        for(int j = 0; j < 2; j++) {
+           std::cout << head_strategies[i][j] << '\n';
+        }
     }
     std::cout << completed_requests.size() << '\n';
     for (auto req_id : completed_requests) {
@@ -110,4 +113,28 @@ inline void read_object_output(const std::vector<HeadStrategy>& head_strategies,
     }
     std::cout.flush();
 }
+
+inline void busy_requests_output(const std::vector<int>& busy_requests) {
+    std::cout << busy_requests.size() << '\n';
+    for (auto req_id : busy_requests) {
+        std::cout << req_id << '\n';
+    }
+    std::cout.flush();
+}
+
+inline void garbage_collection_input() {
+    std::string str;
+    std::cin >> str;
+    std::cin >> str;
+}
+
+// TODO: 临时方案
+inline void garbage_collection_output() {
+    std::cout << "GARBAGE COLLECTION" << '\n';
+    for(int i = 0; i < global::N; i++) {
+        std::cout << "0\n";
+    }
+    std::cout.flush();
+}
+
 }  // namespace io

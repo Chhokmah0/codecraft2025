@@ -18,6 +18,10 @@ inline int mod(int p, int l, int r, int step) {
     return (p - l + step % len + len) % len + l;
 }
 
+inline int move_head(int disk_id, int slice_id, int p, int step) {
+    return mod(p, global::disks[disk_id].slice_start[slice_id], global::disks[disk_id].slice_end[slice_id], step);
+}
+
 inline std::vector<int> deleted_requests;
 inline std::vector<int> completed_requests;
 
@@ -55,26 +59,26 @@ inline void write_object(const ObjectWriteStrategy& strategy) {
 }
 
 // 模拟单个磁头的动作
-inline void simulate_head(Disk& disk, const HeadStrategy& strategy) {
+inline void simulate_head(Disk& disk, int head_id, const HeadStrategy& strategy) {
     for (const auto& action : strategy.actions) {
         switch (action.type) {
             case HeadActionType::JUMP: {
-                disk.pre_action = HeadActionType::JUMP;
-                disk.pre_action_cost = global::G;
-                disk.head = action.target;
+                disk.pre_action[head_id] = HeadActionType::JUMP;
+                disk.pre_action_cost[head_id] = global::G;
+                disk.head[head_id] = action.target;
                 break;
             }
             case HeadActionType::READ: {
                 auto cost =
-                    disk.pre_action != HeadActionType::READ ? 64 : std::max(16, (disk.pre_action_cost * 4 + 4) / 5);
-                disk.pre_action = HeadActionType::READ;
-                disk.pre_action_cost = cost;
+                    disk.pre_action[head_id] != HeadActionType::READ ? 64 : std::max(16, (disk.pre_action_cost[head_id] * 4 + 4) / 5);
+                disk.pre_action[head_id] = HeadActionType::READ;
+                disk.pre_action_cost[head_id] = cost;
 
                 // NOTE: 模拟读取操作的方法，同时维护对象和磁盘的状态
-                ObjectBlock& block = disk.blocks[disk.head];
+                ObjectBlock& block = disk.blocks[disk.head[head_id]];
                 if (block.object_id == 0) {
                     // 读取了一个空块，该操作也是合法的，但是需要特殊处理
-                    disk.head = disk.head % global::V + 1;
+                    disk.head[head_id] = disk.head[head_id] % global::V + 1;
                     break;
                 }
                 Object& object = global::objects[block.object_id];
@@ -86,13 +90,13 @@ inline void simulate_head(Disk& disk, const HeadStrategy& strategy) {
                     t_disk.read(object.block_id[i][block.object_block_index]);
                 }
 
-                disk.head = disk.head % global::V + 1;
+                disk.head[head_id] = disk.head[head_id] % global::V + 1;
                 break;
             }
             case HeadActionType::PASS: {
-                disk.pre_action = HeadActionType::PASS;
-                disk.pre_action_cost = 1;
-                disk.head = disk.head % global::V + 1;
+                disk.pre_action[head_id] = HeadActionType::PASS;
+                disk.pre_action_cost[head_id] = 1;
+                disk.head[head_id] = disk.head[head_id] % global::V + 1;
                 break;
             }
         }
