@@ -1,5 +1,6 @@
 #pragma once
 #include <random>
+#include <unordered_map>
 
 #include "structures.hpp"
 
@@ -10,6 +11,7 @@ inline int M;  // 对象标签的数量
 inline int N;  // 存储系统中硬盘的个数
 inline int V;  // 每个硬盘中存储单元的个树
 inline int G;  // 每个磁头每个时间片最多消耗的令牌数
+inline int K;  // 垃圾回收时最多可以交换 block 的次数
 
 inline std::mt19937_64 rng(4307);  // 全局随机器
 

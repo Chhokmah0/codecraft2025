@@ -19,24 +19,15 @@ namespace baseline {
 
 // ---------------策略----------------
 
-inline std::vector<std::vector<int>> local_disk_slice_p;
-inline std::vector<int> should_jmp;
+inline std::vector<int> should_jmp;  // 每一个 slice 读取完毕后应该强制跳转
 
-inline std::vector<std::vector<int>> suffix_sum_read;
-inline std::vector<std::vector<double>> similarity;
+inline std::vector<std::vector<int>> suffix_sum_read;  // tag 在每个时间片的后续读取次数
+inline std::vector<std::vector<double>> similarity;    // tag 两两之间的相似度
 
+// 本地初始化
 inline void init_local() {
     global::disks.resize(global::N + 1, Disk(global::V, global::M));
-    local_disk_slice_p.resize(global::N + 1);
     should_jmp.resize(global::N + 1, 0);
-    for (int i = 1; i <= global::N; i++) {
-        /* if (i % 2 == 1) {
-             local_disk_slice_p[i] = global::disks[i].slice_start;
-         } else {
-             local_disk_slice_p[i] = global::disks[i].slice_end;
-         }*/
-        local_disk_slice_p[i] = global::disks[i].slice_start;
-    }
 
     suffix_sum_read = global::fre_read;
     for (int i = 1; i <= global::M; i++) {
@@ -59,15 +50,6 @@ inline void init_local() {
         }
         similarity[i][i] = 1;  // 减少精度损失
     }
-
-    // 调试输出
-    // std::cerr << "similarity: " << std::endl;
-    // for (int i = 1; i <= global::M; i++) {
-    //     for (int j = 1; j <= global::M; j++) {
-    //         std::cerr << std::fixed << std::setprecision(2) << similarity[i][j] << " ";
-    //     }
-    //     std::cerr << std::endl;
-    // }
 }
 
 inline double similarity_with_slice(const Disk& disk, int slice_id, int tag) {
@@ -86,10 +68,7 @@ inline double similarity_with_slice(int disk_id, int slice_id, int tag) {
     return similarity_with_slice(global::disks[disk_id], slice_id, tag);
 }
 
-inline int move_head(int disk_id, int slice_id, int p, int step) {
-    return mod(p, global::disks[disk_id].slice_start[slice_id], global::disks[disk_id].slice_end[slice_id], step);
-}
-
+// -------------------------写入策略-------------------------
 inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
     std::vector<int> block_id(size + 1);
     const Disk& disk = global::disks[disk_id];
@@ -202,7 +181,8 @@ int find_slice(int disk_id, int size, int tag) {
     }
     return res;
 }
-// 写入策略
+
+// 写入策略函数，需要维护 object 和 disk 的状态
 inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vector<ObjectWriteRequest>& objects) {
     std::vector<ObjectWriteStrategy> strategies(objects.size());
 
@@ -322,22 +302,18 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
     return strategies;
 }
 
-// 磁头移动策略
-
-HeadStrategy simulate_strategy(int disk_id) {
+// -------------------------磁头策略-------------------------
+// 磁头策略函数，返回 disk_id 磁头的策略
+inline HeadStrategy simulate_strategy(int disk_id) {
     Disk& disk = global::disks[disk_id];
     HeadStrategy strategy;
-    if (disk.last_query_time.empty()) {
+    if (disk.total_query_num == 0) {
         return strategy;
     }
     // 第 n 次 READ 时所消耗的令牌，第 8 次往后都是 16
     // 0 是 PASS 时的消耗
     const int COST[] = {1, 64, 52, 42, 34, 28, 23, 19, 16};
     const int COST_SIZE = sizeof(COST) / sizeof(int);
-    // debug
-    if (global::timestamp == 4916 && disk_id == 4) {
-        int stop = 0;
-    }
 
     // 动态规划
     // dp[i][j] 表示磁头在位置 i 时，使用第 j 次 READ 后的最大剩余令牌
@@ -358,7 +334,7 @@ HeadStrategy simulate_strategy(int disk_id) {
             } else {
                 read_count = 0;
             }
-            if (disk.last_query_time.count(p) == 0) {
+            if (disk.query_num[p] == 0) {
                 // 磁头在空闲块上时才可以 PASS
                 dp[0][0] = global::G - 1;
                 pre_read_count[0][0] = read_count;
@@ -376,7 +352,7 @@ HeadStrategy simulate_strategy(int disk_id) {
         }
 
         // 计算 dp[i][j]
-        if (disk.last_query_time.count(p) == 0) {
+        if (disk.query_num[p] == 0) {
             // 磁头在空闲块上时才可以 PASS
             int max_budget_read_count = std::max_element(dp[i - 1].begin(), dp[i - 1].end()) - dp[i - 1].begin();
             int max_budget = dp[i - 1][max_budget_read_count];
@@ -391,7 +367,7 @@ HeadStrategy simulate_strategy(int disk_id) {
         for (int j = 0; j < COST_SIZE; j++) {
             if (dp[i - 1][j] == -1) continue;
             if (j == COST_SIZE - 1) {
-                if (dp[i-1][j] - COST[j] > dp[i][j]) {
+                if (dp[i - 1][j] - COST[j] > dp[i][j]) {
                     dp[i][j] = dp[i - 1][j] - COST[j];
                     pre_read_count[i][j] = j;
                 }
@@ -434,7 +410,7 @@ HeadStrategy simulate_strategy(int disk_id) {
     bool valid_strategy = false;
     int p = disk.head;
     for (const auto& action : strategy.actions) {
-        if (action.type == HeadActionType::READ && disk.last_query_time.count(p) != 0) {
+        if (action.type == HeadActionType::READ && disk.query_num[p] != 0) {
             valid_strategy = true;
             break;
         }
@@ -455,7 +431,7 @@ HeadStrategy simulate_strategy(int disk_id) {
         }
         if (target_slice != 0) {
             int target = disk.slice_start[target_slice];
-            while (disk.last_query_time.count(target) == 0) {
+            while (disk.query_num[target] == 0) {
                 target = mod(target, 1, global::V, 1);
             }
             strategy.add_action(HeadActionType::JUMP, target);
@@ -464,6 +440,7 @@ HeadStrategy simulate_strategy(int disk_id) {
     return strategy;
 }
 
+// 具体的磁头策略，需要维护 disk 的状态
 inline std::vector<HeadStrategy> head_strategy_function() {
     std::vector<HeadStrategy> head_strategies(global::N + 1);
     std::vector<int> index(global::N + 1);
@@ -501,8 +478,9 @@ inline std::vector<HeadStrategy> head_strategy_function() {
             for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]];
                  pos++) {
                 ObjectBlock& block = disk.blocks[pos];
-                if (block.object_id == 0 || !disk.last_query_time.count(pos)) continue;
+                if (block.object_id == 0 || disk.query_num[pos] != 0) continue;
                 Object& object = global::objects[block.object_id];
+                object.clean_gain();
                 for (int i = 0; i < 3; i++) {
                     if (object.disk_id[i] == disk_id) {
                         continue;
@@ -518,6 +496,33 @@ inline std::vector<HeadStrategy> head_strategy_function() {
     return head_strategies;
 }
 
+// -------------------------放弃读取请求-------------------------
+
+// 放弃读取请求，需要维护 disk 和 object 的状态
+inline std::vector<int> timeout_read_requests_function() {
+    std::vector<int> timeout_read_requests;
+    for (auto& [obj_id, object] : global::objects) {
+        // 获取时就维护了 object 的状态
+        auto temp_timeout_read_requests = object.get_timeout_requests(global::timestamp);
+        for (const auto& request : temp_timeout_read_requests) {
+            timeout_read_requests.push_back(request.req_id);
+            // 维护磁盘的状态
+            for (int i = 0; i < 3; i++) {
+                Disk& disk = global::disks[object.disk_id[i]];
+                for (int j = 1; j <= object.size; j++) {
+                    if (request.readed[j] == false) {
+                        disk.decease_query(object.block_id[i][j]);
+                        if (request.uncleand_gain) {
+                            disk.decease_gain(object.block_id[i][j], global::timestamp - request.timestamp);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return timeout_read_requests;
+}
+
 // ---------------交互----------------
 // 应该是不需要修改
 inline void run() {
@@ -525,6 +530,11 @@ inline void run() {
     init_local();
     io::init_output();
     for (global::timestamp = 1; global::timestamp <= global::T + 105; global::timestamp++) {
+        // debug
+        // std::cerr << "timestamp: " << global::timestamp << std::endl;
+        // for (int i = 1; i <= global::N; ++i) {
+        //     global::disks[i].debug_check();
+        // }
         // 时间片交互事件
         io::timestamp_align(global::timestamp);
 
@@ -546,7 +556,7 @@ inline void run() {
         auto read_objects = io::read_object_input();
         for (const auto& [req_id, object_id] : read_objects) {
             Object& object = global::objects[object_id];
-            object.add_request(req_id);
+            object.add_request(req_id, global::timestamp);
             for (int i = 0; i < 3; i++) {
                 Disk& disk = global::disks[object.disk_id[i]];
                 for (int j = 1; j <= object.size; j++) {
@@ -559,12 +569,24 @@ inline void run() {
         completed_requests.clear();
         auto head_strategies = head_strategy_function();
         io::read_object_output(head_strategies, completed_requests);
+
+        // 获取放弃/超时的读取请求
+        auto timeout_read_requests = timeout_read_requests_function();
+        io::busy_requests_output(timeout_read_requests);
+        // 一轮结束，更新磁盘的状态
         for (int i = 1; i <= global::N; ++i) {
             for (int j = 1; j <= global::V; ++j) {
                 if (global::disks[i].blocks[j].object_id != 0) {
                     global::disks[i].update(j);
                 }
             }
+        }
+
+        // 垃圾回收
+        // TODO: 临时方案
+        if (global::timestamp % 1800 == 0) {
+            io::garbage_collection_input();
+            io::garbage_collection_output();
         }
     }
 }

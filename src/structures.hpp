@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cassert>
+#include <deque>
 #include <iterator>
 #include <limits>
 #include <map>
@@ -8,6 +9,7 @@
 #include <set>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 
@@ -19,7 +21,7 @@ struct ObjectWriteRequest {
 
 struct ObjectWriteStrategy {
     ObjectWriteRequest object;
-    int disk_id[3];                // 三个副本的目标硬盘
+    int disk_id[3];  // 三个副本的目标硬盘
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意 object 的块和硬盘上的块都是从 1
                                    // 开始编号的，block_id[0] 不使用。
 
@@ -86,8 +88,10 @@ struct Range {
 class Disk {
    public:
     std::vector<ObjectBlock> blocks;        // 从 1 开始编号，0 号块不使用
+    std::vector<int> query_num;             // 每个 block 上的查询个数
     std::vector<double> margin_gain;        // 每个 block 上的剩余查询收益
     std::vector<double> start_margin_gain;  // 不考虑衰减的每个block上的查询收益
+    int total_query_num;                    // 总的查询个数
     double total_margin_gain;               // 总的查询收益
     int empty_block_num;                    // 空余的块数量
 
@@ -98,25 +102,27 @@ class Disk {
 
     int slice_size;  // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
     int slice_num;
-    std::vector<int> slice_id;                           // slice_id[block_index] 表示这个位置被分到第几个块
-    std::vector<int> slice_tag;                          // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
-    std::vector<int> slice_last_tag;                     // slice 中最新的 tag
+    std::vector<int> slice_id;        // slice_id[block_index] 表示这个位置被分到第几个块
+    std::vector<int> slice_tag;       // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
+    std::vector<int> slice_last_tag;  // slice 中最新的 tag
     std::vector<std::vector<int>> slice_tag_writed_num;  // slice 中每个 tag 的块数量
     std::vector<int> slice_empty_block_num;              // 每个 slice 中空闲的块数量
     std::vector<int> slice_start,
-        slice_end;                          // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
+        slice_end;  // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
+    std::vector<int> slice_query_num;       // 每个 slice 中的查询个数
     std::vector<double> slice_margin_gain;  // 每个 slice 中的剩余查询收益
 
     std::vector<int> tag_slice_num;  // 每个 tag 在该硬盘上的 slice 数量
 
-    std::set<Range> empty_range;         // 未被写入的连续块
-    std::set<int> writed;                // 被写入的块
-    std::map<int, int> last_query_time;  // 拥有查询的块，(index, last_query_time)
+    std::set<Range> empty_range;  // 未被写入的连续块
+    std::set<int> writed;         // 被写入的块
 
     Disk(int v, int m)
         : blocks(v + 1),
+          query_num(v + 1),
           margin_gain(v + 1),
           start_margin_gain(v + 1),
+          total_query_num(0),
           total_margin_gain(0),
           empty_block_num(v),
           head(1),
@@ -132,6 +138,7 @@ class Disk {
           slice_empty_block_num(slice_size + 1),
           slice_start(slice_size + 1),
           slice_end(slice_size + 1),
+          slice_query_num(slice_size + 1),
           slice_margin_gain(slice_size + 1),
           tag_slice_num(m + 1) {
         empty_range.insert(Range{1, v});
@@ -147,8 +154,10 @@ class Disk {
 
     Disk(int v, int m, int slice_size)
         : blocks(v + 1),
+          query_num(v + 1),
           margin_gain(v + 1),
           start_margin_gain(v + 1),
+          total_query_num(0),
           total_margin_gain(0),
           empty_block_num(v),
           head(1),
@@ -164,6 +173,7 @@ class Disk {
           slice_empty_block_num(slice_size + 1),
           slice_start(slice_size + 1),
           slice_end(slice_size + 1),
+          slice_query_num(slice_size + 1),
           slice_margin_gain(slice_size + 1),
           tag_slice_num(m + 1) {
         empty_range.insert(Range{1, v});
@@ -210,6 +220,14 @@ class Disk {
 
     // 释放第 i 个块
     void erase(int index) {
+        // 释放查询
+        clean_query(index);
+        slice_margin_gain[slice_id[index]] -= margin_gain[index];
+        total_margin_gain -= margin_gain[index];
+        start_margin_gain[index] = 0;
+        margin_gain[index] = 0;
+
+        // 释放块
         writed.erase(index);
         empty_block_num++;
         slice_empty_block_num[slice_id[index]]++;
@@ -241,19 +259,12 @@ class Disk {
             empty_range.erase(it);
         }
         empty_range.insert(Range{l, r});
-
-        // 释放查询
-        last_query_time.erase(index);
-        slice_margin_gain[slice_id[index]] -= margin_gain[index];
-        total_margin_gain -= margin_gain[index];
-        start_margin_gain[index] = 0;
-        margin_gain[index] = 0;
     }
 
     void query(int index, int timestamp) {
         const ObjectBlock& object = blocks[index];
         assert(object.object_id != 0);
-        last_query_time[index] = timestamp;
+        increase_query(index);
         double gain = (double)(object.object_size + 1) / object.object_size;
         slice_margin_gain[slice_id[index]] += gain;
         margin_gain[index] += gain;
@@ -287,11 +298,60 @@ class Disk {
         if (object.object_id == 0) {
             return;
         }
-        last_query_time.erase(block_index);
+        clean_query(block_index);
         slice_margin_gain[slice_id[block_index]] -= margin_gain[block_index];
         total_margin_gain -= margin_gain[block_index];
         margin_gain[block_index] = 0;
         start_margin_gain[block_index] = 0;
+    }
+
+    // 降低当前 block 的贡献
+    void decease_gain(int block_index, int passed_time) {
+        const ObjectBlock& object = blocks[block_index];
+        assert(object.object_id != 0);
+        double gain = (double)(object.object_size + 1) / object.object_size;
+        start_margin_gain[block_index] -= gain;
+        while (passed_time--) {
+            gain *= 0.998;
+        }
+        margin_gain[block_index] -= gain;
+        slice_margin_gain[slice_id[block_index]] -= gain;
+        total_margin_gain -= gain;
+    }
+
+    // 增加当前 block 的查询个数
+    void increase_query(int block_index) {
+        const ObjectBlock& object = blocks[block_index];
+        assert(object.object_id != 0);
+        query_num[block_index]++;
+        slice_query_num[slice_id[block_index]]++;
+        total_query_num++;
+    }
+
+    // 降低当前 block 的查询个数
+    void decease_query(int block_index) {
+        const ObjectBlock& object = blocks[block_index];
+        assert(object.object_id != 0);
+        query_num[block_index]--;
+        slice_query_num[slice_id[block_index]]--;
+        total_query_num--;
+    }
+
+    // 清除当前 block 的查询个数
+    void clean_query(int block_index) {
+        const ObjectBlock& object = blocks[block_index];
+        assert(object.object_id != 0);
+        slice_query_num[slice_id[block_index]] -= query_num[block_index];
+        total_query_num -= query_num[block_index];
+        query_num[block_index] = 0;
+    }
+
+    void debug_check() {
+        for (int i = 1; i <= v; i++) {
+            assert(query_num[i] >= 0);
+            assert(margin_gain[i] >= -1e-10);
+            assert(start_margin_gain[i] >= -1e-10);
+        }
     }
 };
 
@@ -304,6 +364,13 @@ struct ObjectReadStatus {
     int req_id;
     int readed_size;
     std::vector<char> readed;  // 从 1 开始标号，0 号块不使用
+    int timestamp;
+    bool uncleand_gain = false;
+};
+
+struct ObjectReadTime {
+    int req_id;
+    int timestamp;
 };
 
 class Object {
@@ -311,12 +378,14 @@ class Object {
     int id;
     int size;
     int tag;
-    int disk_id[3];                // 三个副本的目标硬盘
+    int disk_id[3];  // 三个副本的目标硬盘
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
    private:
+    std::deque<ObjectReadTime> read_queue;  // 读取请求的队列，存储的是请求的编号和时间戳
+    std::unordered_set<int>
+        unclean_gain_requests;  // 没有被清理掉贡献的请求，注意这里的请求可能已经被完成，因此只应该用于判断，不应该用于枚举
     std::unordered_map<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
     std::vector<int> request_number;                          // 第 i 个分块上的未完成请求数量
-
    public:
     Object() = default;
     Object(ObjectWriteStrategy strategy) {
@@ -330,11 +399,13 @@ class Object {
         request_number.resize(size + 1);
     }
 
-    void add_request(int req_id) {
-        read_requests[req_id] = ObjectReadStatus{req_id, 0, std::vector<char>(size + 1)};
+    void add_request(int req_id, int timestamp) {
+        read_requests[req_id] = ObjectReadStatus{req_id, 0, std::vector<char>(size + 1), timestamp, true};
         for (int i = 1; i <= size; i++) {
             request_number[i]++;
         }
+        read_queue.push_back(ObjectReadTime{req_id, timestamp});
+        unclean_gain_requests.insert(req_id);
     }
 
     // 获取这个对象第 block_index 个块的未完成请求数量，block_num 从 1 开始编号
@@ -358,6 +429,43 @@ class Object {
             read_requests.erase(req_id);
         }
         return completed_requests;
+    }
+
+    // 获取超时的请求
+    std::vector<ObjectReadStatus> get_timeout_requests(int timestamp) {
+        std::vector<ObjectReadStatus> timeout_requests;
+        while (!read_queue.empty() && read_queue.front().timestamp + 105 <= timestamp) {
+            int req_id = read_queue.front().req_id;
+            read_queue.pop_front();
+
+            if (!read_requests.count(req_id)) {
+                continue;
+            }
+
+            ObjectReadStatus request = read_requests[req_id];
+            read_requests.erase(req_id);
+
+            request.uncleand_gain = false;
+            if (unclean_gain_requests.count(req_id)) {
+                request.uncleand_gain = true;
+                unclean_gain_requests.erase(req_id);
+            }
+            timeout_requests.push_back(request);
+        }
+        return timeout_requests;
+    }
+
+    // 标记某个请求为已经清理 gain（由于一个物品一定在某个 slice
+    // 中，被清理时一定会将目前所有的请求都清理掉，所以直接清空即可）
+    void clean_gain() { unclean_gain_requests.clear(); }
+
+    // 放弃某个请求
+    void give_up_request(int req_id) {
+        assert(read_requests.count(req_id));
+        read_requests.erase(req_id);
+        if (unclean_gain_requests.count(req_id)) {
+            unclean_gain_requests.erase(req_id);
+        }
     }
 
     const std::unordered_map<int, ObjectReadStatus>& get_read_status() const { return read_requests; }

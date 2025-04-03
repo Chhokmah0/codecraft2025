@@ -18,6 +18,10 @@ inline int mod(int p, int l, int r, int step) {
     return (p - l + step % len + len) % len + l;
 }
 
+inline int move_head(int disk_id, int slice_id, int p, int step) {
+    return mod(p, global::disks[disk_id].slice_start[slice_id], global::disks[disk_id].slice_end[slice_id], step);
+}
+
 inline std::vector<int> deleted_requests;
 inline std::vector<int> completed_requests;
 
