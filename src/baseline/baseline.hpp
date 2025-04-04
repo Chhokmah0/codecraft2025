@@ -232,11 +232,11 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         int time_block = std::min((global::timestamp - 1) / 1800 + 1, global::fre_len);
         int read_count_i = suffix_sum_read[objects[i].tag][time_block];
         int read_count_j = suffix_sum_read[objects[j].tag][time_block];
-        int size_i = objects[i].size;
-        int size_j = objects[j].size;
+        int size_i = -objects[i].size;
+        int size_j = -objects[j].size;
         // FIXME: 这里的实现有点问题，但不知道为啥有用
-        return std::tie(read_count_i, objects[i].tag, size_i) <
-               std::tie(read_count_j, objects[j].tag, size_j);
+        return std::tie(size_i, read_count_i, objects[i].tag) <
+               std::tie(size_j, read_count_j, objects[j].tag);
     });
 
     for (size_t opt = 0; opt < object_index.size(); opt++) {
@@ -247,18 +247,18 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         std::vector<int> disk_ids(global::N);
         std::iota(disk_ids.begin(), disk_ids.end(), 1);
         // 将 (tag - 1) % V + 1 作为优先的硬盘，同时也优先考虑这里往后的硬盘
-        // std::rotate(disk_ids.begin(), disk_ids.begin() + (object.tag - 1) % global::N, disk_ids.end());
+        /*std::rotate(disk_ids.begin(), disk_ids.begin() + (object.tag - 1) % global::N, disk_ids.end());
         // 将已经存在 "slice 的 last_tag" 和 "object 的 tag" 相同的硬盘延后考虑
         // 保证一定的负载均衡
-        // auto not_have_slice_same_tag = [&](int disk_id) {
-        //     for (int slice_id = 1; slice_id <= global::disks[disk_id].slice_num; slice_id++) {
-        //         if (global::disks[disk_id].slice_last_tag[slice_id] == object.tag) {
-        //             return false;
-        //         }
-        //     }
-        //     return true;
-        // };
-        // std::stable_partition(disk_ids.begin(), disk_ids.end(), not_have_slice_same_tag);
+        auto not_have_slice_same_tag = [&](int disk_id) {
+            for (int slice_id = 1; slice_id <= global::disks[disk_id].slice_num; slice_id++) {
+                if (global::disks[disk_id].slice_last_tag[slice_id] == object.tag) {
+                    return false;
+                }
+            }
+            return true;
+        };
+        std::stable_partition(disk_ids.begin(), disk_ids.end(), not_have_slice_same_tag);*/
         // std::shuffle(disk_ids.begin(), disk_ids.end(), global::rng);
         // 选三次硬盘
         for (int i = 0; i < 3; i++) {
@@ -319,7 +319,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             // 选好了硬盘和 slice，开始放置
             strategy.disk_id[i] = target_disk_id;
             target_slice_id = find_slice(strategy.disk_id[i], object.size, object.tag);
-            if (object.tag % 2 == 1) {
+            if (__builtin_popcount(global::disks[target_disk_id].slice_tag[target_slice_id]) % 2 == 1) {
                 strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
             } else {
                 strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
@@ -509,7 +509,7 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
         // 判断是否已经扫完块并且下一步是否要强制跳转
         if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
             should_jmp[disk_id][head_id] = false;
-        } else if ((int)strategy.actions.size() + disk.head[head_id] >
+        } else if ((int)strategy.actions.size() + disk.head[head_id] >=
                    disk.slice_end[disk.slice_id[disk.head[head_id]]]) {
             should_jmp[disk_id][head_id] = true;
         }

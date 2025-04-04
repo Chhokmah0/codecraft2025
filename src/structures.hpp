@@ -140,7 +140,8 @@ class Disk {
           v(v),
           pre_action{HeadActionType::JUMP, HeadActionType::JUMP},
           pre_action_cost{0, 0},
-          slice_size((v + m - 1) / m),
+          slice_size(1024),
+          // slice_size((v + m - 1) / m),
           slice_num((v - 1) / slice_size + 1),
           slice_id(v + 1),
           slice_tag(slice_size + 1),
@@ -276,7 +277,8 @@ class Disk {
         const ObjectBlock& object = blocks[index];
         assert(object.object_id != 0);
         increase_query(index);
-        double gain = (double)(object.object_size + 1) / object.object_size + timestamp / 1800;
+        double gain = (double)(object.object_size + 1) / object.object_size + timestamp / 1800 * object.object_size;
+        // gain *= object.object_size;
         slice_margin_gain[slice_id[index]] += gain;
         margin_gain[index] += gain;
         start_margin_gain[index] += gain;
