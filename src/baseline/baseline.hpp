@@ -455,14 +455,23 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
         simulate_read_time[i] =
             std::count_if(strategy1.actions.begin(), strategy1.actions.end(),
                           [](const HeadAction& action) { return action.type == HeadActionType::READ; });
+<<<<<<< HEAD
         simulate_read_time[i + global::N] = std::count_if(strategy2.actions.begin(), strategy2.actions.end(),
                                                           [](const HeadAction& action) { return action.type == HeadActionType::READ; });
+=======
+        simulate_read_time[i + global::N] =
+            std::count_if(strategy2.actions.begin(), strategy2.actions.end(),
+                          [](const HeadAction& action) { return action.type == HeadActionType::READ; });
+>>>>>>> 7c57a7013fc3b3cd743810cd6cda82f9e2611ae0
     }
 
     std::sort(index.begin() + 1, index.end(),
               [&simulate_read_time](int i, int j) { return simulate_read_time[i] > simulate_read_time[j]; });
     for (int i = 1; i <= 2 * global::N; i++) {
+<<<<<<< HEAD
         // for (int head_id = 0; head_id < 2; head_id++) {
+=======
+>>>>>>> 7c57a7013fc3b3cd743810cd6cda82f9e2611ae0
         int disk_id = index[i] > global::N ? index[i] - global::N : index[i];
         int head_id = index[i] > global::N ? 1 : 0;
         Disk& disk = global::disks[disk_id];
@@ -479,8 +488,13 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
         simulate_head(disk, head_id, strategy);
         // 如果是跳转的话，将该块对应的其他块的信息清空
         if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
+<<<<<<< HEAD
             for (int pos = strategy.actions[0].target;
                  pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]]; pos++) {
+=======
+            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]];
+                 pos++) {
+>>>>>>> 7c57a7013fc3b3cd743810cd6cda82f9e2611ae0
                 ObjectBlock& block = disk.blocks[pos];
                 if (block.object_id == 0 || disk.query_num[pos] == 0) continue;
                 Object& object = global::objects[block.object_id];
@@ -491,8 +505,8 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
                         diskt.clean_gain(object.block_id[i][j]);
                     }
                 }
-                assert(std::abs(disk.slice_margin_gain[disk.slice_id[strategy.actions[0].target]]) <= 1e-10);
             }
+            assert(std::abs(disk.slice_margin_gain[disk.slice_id[strategy.actions[0].target]]) <= 1e-10);
         }
     }
     return head_strategies;

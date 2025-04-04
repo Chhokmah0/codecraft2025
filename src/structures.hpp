@@ -13,7 +13,7 @@
 #include <utility>
 #include <vector>
 
-constexpr double ALPHA = 0.998;
+constexpr double ALPHA = 0.999;
 constexpr auto generate_gain_mult() {
     std::array<double, 120> GAIN_MULT = {};
     for (size_t i = 0; i < GAIN_MULT.size(); ++i) {
