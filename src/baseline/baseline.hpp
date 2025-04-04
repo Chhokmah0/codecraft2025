@@ -232,9 +232,11 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         int time_block = std::min((global::timestamp - 1) / 1800 + 1, global::fre_len);
         int read_count_i = suffix_sum_read[objects[i].tag][time_block];
         int read_count_j = suffix_sum_read[objects[j].tag][time_block];
+        int size_i = objects[i].size;
+        int size_j = objects[j].size;
         // FIXME: 这里的实现有点问题，但不知道为啥有用
-        return std::tie(read_count_i, objects[i].tag, objects[i].size) <
-               std::tie(read_count_j, objects[j].tag, objects[j].size);
+        return std::tie(read_count_i, objects[i].tag, size_i) <
+               std::tie(read_count_j, objects[j].tag, size_j);
     });
 
     for (size_t opt = 0; opt < object_index.size(); opt++) {
@@ -317,7 +319,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             // 选好了硬盘和 slice，开始放置
             strategy.disk_id[i] = target_disk_id;
             target_slice_id = find_slice(strategy.disk_id[i], object.size, object.tag);
-            if (target_disk_id % 2 == 1) {
+            if (object.tag % 2 == 1) {
                 strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
             } else {
                 strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
@@ -460,7 +462,7 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
         double max_gain = 0;
         int target_slice = 0;
         for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-            if (disk.slice_margin_gain[slice_id] > max_gain && disk.slice_id[disk.head[head_id ^ 1]] != slice_id) {
+            if (disk.slice_margin_gain[slice_id] >= max_gain && disk.slice_id[disk.head[head_id ^ 1]] != slice_id) {
                 max_gain = disk.slice_margin_gain[slice_id];
                 target_slice = slice_id;
             }
