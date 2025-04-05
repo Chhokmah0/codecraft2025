@@ -241,6 +241,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                         if (neighbor_has_tag != other.neighbor_has_tag) {
                             return neighbor_has_tag > other.neighbor_has_tag;
                         }
+                        return false;
                     }
                 };
                 return SliceValue{has_tag, tag_num, empty_block_num, empty_slice_num, neighbor_has_tag};
