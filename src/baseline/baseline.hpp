@@ -212,12 +212,26 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                         empty_slice_num++;
                     }
                 }
-                // 优先拥有 tag
-                // 优先 tag 数量少的 slice
-                // 优先剩余空间大的 slice
-                // 优先剩余空的 slice 多的 disk
-                // 优先相邻的 slice 也有 tag 的 slice
-                return std::make_tuple(!has_tag, tag_num, -empty_block_num, -empty_slice_num, !neighbor_has_tag);
+
+                struct SliceValue {
+                    bool has_tag;
+                    int tag_num;
+                    int empty_block_num;
+                    int empty_slice_num;
+                    bool neighbor_has_tag;
+
+                    bool operator<(const SliceValue& other) const {
+                        // 优先拥有 tag
+                        // 优先 tag 数量少的 slice
+                        // 优先剩余空间大的 slice
+                        // 优先剩余空的 slice 多的 disk
+                        // 优先相邻的 slice 也有 tag 的 slice
+                        return std::tie(has_tag, tag_num, empty_block_num, empty_slice_num, neighbor_has_tag) <
+                               std::tie(other.has_tag, other.tag_num, other.empty_block_num, other.empty_slice_num,
+                                        other.neighbor_has_tag);
+                    }
+                };
+                return SliceValue{has_tag, tag_num, empty_block_num, empty_slice_num, neighbor_has_tag};
             };
             // TODO：如果不 shuffle 的话，不同 tag 的物品会被按顺序放到硬盘上，使得 neighbor_has_tag 的 slice
             // 数量大大减少
