@@ -226,9 +226,21 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                         // 优先剩余空间大的 slice
                         // 优先剩余空的 slice 多的 disk
                         // 优先相邻的 slice 也有 tag 的 slice
-                        return std::tie(has_tag, tag_num, empty_block_num, empty_slice_num, neighbor_has_tag) <
-                               std::tie(other.has_tag, other.tag_num, other.empty_block_num, other.empty_slice_num,
-                                        other.neighbor_has_tag);
+                        if (has_tag != other.has_tag) {
+                            return has_tag > other.has_tag;
+                        }
+                        if (tag_num != other.tag_num) {
+                            return tag_num < other.tag_num;
+                        }
+                        if (empty_block_num != other.empty_block_num) {
+                            return empty_block_num > other.empty_block_num;
+                        }
+                        if (empty_slice_num != other.empty_slice_num) {
+                            return empty_slice_num > other.empty_slice_num;
+                        }
+                        if (neighbor_has_tag != other.neighbor_has_tag) {
+                            return neighbor_has_tag > other.neighbor_has_tag;
+                        }
                     }
                 };
                 return SliceValue{has_tag, tag_num, empty_block_num, empty_slice_num, neighbor_has_tag};
