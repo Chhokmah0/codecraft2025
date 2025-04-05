@@ -1,520 +1,517 @@
 #pragma once
 
-#include <algorithm>
+#include <array>
 #include <cassert>
-#include <iomanip>
-#include <numeric>
+#include <deque>
+#include <iterator>
+#include <limits>
+#include <ostream>
+#include <set>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
+#include <utility>
 #include <vector>
 
-#include "../io.hpp"
-#include "utils.hpp"
-
-namespace baseline {
-
-// run 函数自动执行了删除对象时的信息维护
-// 写入对象、模拟磁头动作的信息维护任务交给 write_strategy_function 和 head_strategy_function
-
-// ---------------策略----------------
-
-inline std::vector<std::vector<int>> local_disk_slice_p;
-inline std::vector<int> should_jmp;
-
-inline std::vector<std::vector<int>> suffix_sum_read;
-inline std::vector<std::vector<double>> similarity;
-
-inline void init_local() {
-    global::disks.resize(global::N + 1, Disk(global::V, global::M));
-    local_disk_slice_p.resize(global::N + 1);
-    should_jmp.resize(global::N + 1, 0);
-    for (int i = 1; i <= global::N; i++) {
-        /* if (i % 2 == 1) {
-             local_disk_slice_p[i] = global::disks[i].slice_start;
-         } else {
-             local_disk_slice_p[i] = global::disks[i].slice_end;
-         }*/
-        local_disk_slice_p[i] = global::disks[i].slice_start;
+constexpr double ALPHA = 0.999;
+constexpr auto generate_gain_mult() {
+    std::array<double, 120> GAIN_MULT = {};
+    for (size_t i = 0; i < GAIN_MULT.size(); ++i) {
+        GAIN_MULT[i] = (i == 0) ? 1 : ALPHA * GAIN_MULT[i - 1];
     }
-
-    suffix_sum_read = global::fre_read;
-    for (int i = 1; i <= global::M; i++) {
-        for (int j = global::fre_len; j >= 1; j--) {
-            suffix_sum_read[i][j - 1] += suffix_sum_read[i][j];
-        }
-    }
-
-    // 余弦相似度
-    similarity.resize(global::M + 1, std::vector<double>(global::M + 1));
-    for (int i = 1; i <= global::M; i++) {
-        for (int j = 1; j <= global::M; j++) {
-            double p = 0, lx = 0, ly = 0;
-            for (int k = 1; k <= global::fre_len; k++) {
-                p += (double)global::fre_read[i][k] * global::fre_read[j][k];
-                lx += (double)global::fre_read[i][k] * global::fre_read[i][k];
-                ly += (double)global::fre_read[j][k] * global::fre_read[j][k];
-            }
-            similarity[i][j] = p / std::sqrt(lx * ly);
-        }
-        similarity[i][i] = 1;  // 减少精度损失
-    }
-
-    // 调试输出
-    // std::cerr << "similarity: " << std::endl;
-    // for (int i = 1; i <= global::M; i++) {
-    //     for (int j = 1; j <= global::M; j++) {
-    //         std::cerr << std::fixed << std::setprecision(2) << similarity[i][j] << " ";
-    //     }
-    //     std::cerr << std::endl;
-    // }
+    return GAIN_MULT;
 }
+constexpr auto generate_simluate_mult() {
+    std::array<double, 120> GAIN_MULT = {};
+    for (size_t i = 0; i < GAIN_MULT.size(); ++i) {
+        GAIN_MULT[i] = i <= 5 ? 0.01 : 0.04;
+    }
+    return GAIN_MULT;
+}
+constexpr auto GAIN_MULT = generate_gain_mult();
+constexpr auto SIMLUATE_MULT = generate_simluate_mult();
+struct ObjectWriteRequest {
+    int id;
+    int size;
+    int tag;
+};
 
-inline double similarity_with_slice(const Disk& disk, int slice_id, int tag) {
-    size_t total_writed_num =
-        std::accumulate(disk.slice_tag_writed_num[slice_id].begin(), disk.slice_tag_writed_num[slice_id].end(), 0);
-    // 加权平均
-    double similarity_sum = 0;
-    for (int i = 1; i <= global::M; i++) {
-        if (disk.slice_tag_writed_num[slice_id][i] != 0) {
-            similarity_sum += (double)disk.slice_tag_writed_num[slice_id][i] / total_writed_num * similarity[tag][i];
-        }
-    }
-    return similarity_sum;
-}
-inline double similarity_with_slice(int disk_id, int slice_id, int tag) {
-    return similarity_with_slice(global::disks[disk_id], slice_id, tag);
-}
+struct ObjectWriteStrategy {
+    ObjectWriteRequest object;
+    int disk_id[3];                // 三个副本的目标硬盘
+    std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意 object 的块和硬盘上的块都是从 1
+                                   // 开始编号的，block_id[0] 不使用。
 
-inline int move_head(int disk_id, int slice_id, int p, int step) {
-    return mod(p, global::disks[disk_id].slice_start[slice_id], global::disks[disk_id].slice_end[slice_id], step);
-}
-
-inline std::vector<int> put_forward(int disk_id, int slice_id, int size) {
-    std::vector<int> block_id(size + 1);
-    const Disk& disk = global::disks[disk_id];
-    // 选择策略：选择最短的能放下size个块的空间
-    int fir = disk.slice_start[slice_id];
-    int end_pos = disk.slice_end[slice_id];
-    int lst = fir - 1;
-    int count = 0;
-    int min_len_p = -1, min_len = 2e9;
-    while (lst < end_pos && count < size) {
-        lst++;
-        if (disk.blocks[lst].object_id == 0) count++;
-    }
-    for (int i = fir;; i++) {
-        if (lst == end_pos && count < size) break;
-        if (lst - i + 1 < min_len) {
-            min_len = lst - i + 1;
-            min_len_p = i;
-        }
-        if (disk.blocks[i].object_id == 0) count--;
-        while (lst < end_pos && count < size) {
-            lst++;
-            if (disk.blocks[lst].object_id == 0) count++;
-        }
-    }
-    int p = min_len_p;
-    for (int i = 1; i <= size; i++) {
-        while (disk.blocks[p].object_id != 0) {
-            p = p % global::V + 1;
-        }
-        block_id[i] = p;
-        p = p % global::V + 1;
-    }
-    for (int i = 1; i <= size; i++) {
-        assert(block_id[i] != 0);
-    }
-    return block_id;
-}
-// 首先去所有slices里找拥有当前tag且slice里tag数量最少的，数量相同取剩余空间最大的，仍然相同就随机选一个
-int find_disk1(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
-    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
-    for (auto [disk_id, slice_id] : disk_block) {
-        Disk& disk = global::disks[disk_id];
-        int nxt_status = disk.slice_tag[slice_id];
-        if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) &&
-                (nxt_status & (1 << tag)) == (1 << tag)) {
-                now = disk_id;
-                now_status = nxt_status;
-                lst_size = disk.slice_empty_block_num[slice_id];
-            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
-                       (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size) {
-                now = disk_id;
-                now_status = nxt_status;
-                lst_size = disk.slice_empty_block_num[slice_id];
-            }
-        }
-    }
-    return now;
-}
-// 在这个硬盘里找tag数量最少的slice，如果相同找剩余空间最大的，仍然相同就随机
-int find_disk2(const std::vector<std::pair<int, int>>& disk_block, int size, int tag) {
-    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
-    for (auto [disk_id, slice_id] : disk_block) {
-        Disk& disk = global::disks[disk_id];
-        int nxt_status = disk.slice_tag[slice_id];
-        if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status)) {
-                now = disk_id;
-                now_status = nxt_status;
-                lst_size = disk.slice_empty_block_num[slice_id];
-            } else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
-                       disk.slice_empty_block_num[slice_id] > lst_size) {
-                now = disk_id;
-                now_status = nxt_status;
-                lst_size = disk.slice_empty_block_num[slice_id];
-            }
-        }
-    }
-    return now;
-}
-int find_slice(int disk_id, int size, int tag) {
-    const Disk& disk = global::disks[disk_id];
-    int now = -1, now_status = 2147483647, res = -1, lst_size = -1;
-    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-        int nxt_status = disk.slice_tag[slice_id];
-        if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status) &&
-                (nxt_status & (1 << tag)) == (1 << tag))
-                now = slice_id, now_status = nxt_status, res = slice_id,
-                lst_size = disk.slice_empty_block_num[slice_id];
-            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
-                     (nxt_status & (1 << tag)) == (1 << tag) && disk.slice_empty_block_num[slice_id] > lst_size)
-                now = slice_id, now_status = nxt_status, res = slice_id,
-                lst_size = disk.slice_empty_block_num[slice_id];
-        }
-    }
-    if (res != -1) return res;
-    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-        int nxt_status = disk.slice_tag[slice_id];
-        if (disk.slice_empty_block_num[slice_id] >= size) {
-            if (__builtin_popcount(nxt_status) < __builtin_popcount(now_status))
-                now = slice_id, now_status = nxt_status, res = slice_id,
-                lst_size = disk.slice_empty_block_num[slice_id];
-            else if (__builtin_popcount(nxt_status) == __builtin_popcount(now_status) &&
-                     disk.slice_empty_block_num[slice_id] > lst_size)
-                now = slice_id, now_status = nxt_status, res = slice_id,
-                lst_size = disk.slice_empty_block_num[slice_id];
-        }
-    }
-    return res;
-}
-// 写入策略
-inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vector<ObjectWriteRequest>& objects) {
-    std::vector<ObjectWriteStrategy> strategies(objects.size());
-
-    std::vector<int> object_index(objects.size());
-    std::iota(object_index.begin(), object_index.end(), 0);
-    // 将具有相同 tag 的元素放在一起
-    // 如果一个 tag 在之后的读取次数最多，则优先放置
-    // 并优先放大的
-    std::sort(object_index.begin(), object_index.end(), [&](int i, int j) {
-        int time_block = std::min((global::timestamp - 1) / 1800 + 1, global::fre_len);
-        int read_count_i = suffix_sum_read[objects[i].tag][time_block];
-        int read_count_j = suffix_sum_read[objects[j].tag][time_block];
-        // FIXME: 这里的实现有点问题，但不知道为啥有用
-        return std::tie(read_count_i, objects[i].tag, objects[i].size) <
-               std::tie(read_count_j, objects[j].tag, objects[j].size);
-    });
-
-    for (size_t i = 0; i < object_index.size(); i++) {
-        const ObjectWriteRequest& object = objects[object_index[i]];
-        ObjectWriteStrategy& strategy = strategies[object_index[i]];
-
-        strategy.object = object;
-        std::vector<int> disk_ids(global::N);
-        std::iota(disk_ids.begin(), disk_ids.end(), 1);
-        // 将 (tag - 1) % V + 1 作为优先的硬盘，同时也优先考虑这里往后的硬盘
-        // std::rotate(disk_ids.begin(), disk_ids.begin() + (object.tag - 1) % global::N, disk_ids.end());
-        // 将已经存在 "slice 的 last_tag" 和 "object 的 tag" 相同的硬盘延后考虑
-        // 保证一定的负载均衡
-        // auto not_have_slice_same_tag = [&](int disk_id) {
-        //     for (int slice_id = 1; slice_id <= global::disks[disk_id].slice_num; slice_id++) {
-        //         if (global::disks[disk_id].slice_last_tag[slice_id] == object.tag) {
-        //             return false;
-        //         }
-        //     }
-        //     return true;
-        // };
-        // std::stable_partition(disk_ids.begin(), disk_ids.end(), not_have_slice_same_tag);
-        // std::shuffle(disk_ids.begin(), disk_ids.end(), global::rng);
-        // 选三次硬盘
+    bool is_used_disk(int disk_id) const {
         for (int i = 0; i < 3; i++) {
-            std::vector<std::pair<int, int>> disk_block;
-            int target_disk_id = -1;
-            int target_slice_id = -1;
-            int max_empty_block_num = 0;
-            for (auto disk_id : disk_ids) {
-                // 不能是已经用了的硬盘
-                if (strategy.is_used_disk(disk_id)) {
-                    continue;
-                }
-                Disk& disk = global::disks[disk_id];
-                for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-                    disk_block.push_back({disk_id, slice_id});
-                }
+            if (this->disk_id[i] == disk_id) {
+                return true;
             }
-            target_disk_id = find_disk1(disk_block, object.size, object.tag);
-
-            if (target_disk_id == -1) {  // 第一步没找到有这个tag的，去选空的slices最多的硬盘，空的数量相同随机选一个盘
-                int max_slice_num = 0;
-                std::vector<int> disk_list;
-                for (auto disk_id : disk_ids) {
-                    // 不能是已经用了的硬盘
-                    if (strategy.is_used_disk(disk_id)) {
-                        continue;
-                    }
-
-                    Disk& disk = global::disks[disk_id];
-                    int empty_slice_num = 0;
-                    for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-                        int status = disk.slice_tag[slice_id];
-                        if (status == 0) empty_slice_num++;
-                        // if (disk.slice_empty_block_num[slice_id] >= object.size) {
-                        //     empty_block_num += disk.slice_empty_block_num[slice_id];
-                        // }待尝试的方向
-                    }
-                    if (empty_slice_num > max_slice_num) {
-                        max_slice_num = empty_slice_num;
-                        disk_list.clear();
-                    }
-                    if (empty_slice_num == max_slice_num) {
-                        disk_list.push_back(disk_id);
-                    }
-                }
-                // 优先空的块尽可能多的盘
-                // std::shuffle(disk_list.begin(), disk_list.end(), global::rng);
-                if (max_slice_num > 0)
-                    target_disk_id = disk_list[global::rng() % disk_list.size()];
-                else  // 没有为空的硬盘，选tag最少的slice
-                    target_disk_id = find_disk2(disk_block, object.size, object.tag);
-            }
-
-            if (target_disk_id == -1) {
-                // 应该不会出现这种情况
-                throw std::runtime_error("No disk can be used.");
-            }
-            // 选好了硬盘和 slice，开始放置
-            strategy.disk_id[i] = target_disk_id;
-            target_slice_id = find_slice(strategy.disk_id[i], object.size, object.tag);
-            // if (target_disk_id % 2 == 1) {
-            strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
-            // } else {
-            //     strategy.block_id[i] = put_back(target_disk_id, target_slice_id, object.size);
-            // }
         }
-
-        // 保证第二个硬盘上的顺序和第一个硬盘上不一样（put_back 本身就会反向放置）
-        // if (strategy.disk_id[1] % 2 == strategy.disk_id[0] % 2) {
-        //     std::reverse(strategy.block_id[1].begin() + 1, strategy.block_id[1].end());
-        // }
-
-        // 随机打乱第三个硬盘上的顺序
-        // tmp[i]是第i个盘放哪个对象块
-        // std::shuffle(strategy.block_id[2].begin() + 1, strategy.block_id[2].end(), global::rng);
-
-        write_object(strategy);
+        return false;
     }
+};
 
-    return strategies;
-}
+// 磁头动作
+enum class HeadActionType {
+    JUMP,  // 跳转
+    READ,  // 读取
+    PASS,  // 跳过
+};
 
-// 磁头移动策略
+struct HeadAction {
+    HeadActionType type;
+    int target;  // 跳转的目标，从 1 开始编号
+};
 
-HeadStrategy simulate_strategy(int disk_id) {
-    Disk& disk = global::disks[disk_id];
-    HeadStrategy strategy;
-    if (disk.last_query_time.empty()) {
-        return strategy;
-    }
-    // 考虑某个磁头的策略
-    int head = disk.head;
-    HeadActionType pre_action = disk.pre_action;
-    int pre_action_cost = disk.pre_action_cost;
-    int budget = global::G;
-    bool vaild_strategy = false;
+struct HeadStrategy {
+    std::vector<HeadAction> actions;
 
-    while (budget != 0) {
-        // 优先使用 read 操作
-        const int READ_BUDGET = 150;  // NOTE: 直到有效的 read 操作前可以使用的 token 数
-        int pre_size = strategy.actions.size();
-        int pre_head = head;
-        int read_budget = std::min(READ_BUDGET, budget);
-        int read_cost = 0;
-        int step_read_cost = pre_action != HeadActionType::READ ? 64 : std::max(16, (pre_action_cost * 4 + 4) / 5);
-        if (step_read_cost > read_budget) {
-            break;
-        }
-        bool vaild_read = false;
-        while (read_budget >= read_cost + step_read_cost) {
-            strategy.add_action(HeadActionType::READ);
-            pre_action = HeadActionType::READ;
-            pre_action_cost = step_read_cost;
-            read_cost += step_read_cost;
-            if (disk.last_query_time.count(head)) {
-                vaild_read = true;
-                vaild_strategy = true;
-                head = mod(head, 1, global::V, 1);
-                break;
-            }
-            head = mod(head, 1, global::V, 1);
-            // 如果转了一圈，跳出
-            if (head == disk.head) {
-                break;
-            }
-        }
-        // 如果转了一圈，跳出
-        if (head == disk.head) {
-            break;
-        }
-        if (!vaild_read) {
-            // 如果没有有效的 read，清空 read 操作，改成 pass 操作
-            strategy.actions.resize(pre_size);
-            head = pre_head;
-            while (budget > 0) {
-                strategy.add_action(HeadActionType::PASS);
-                budget--;
-                head = mod(head, 1, global::V, 1);
-                pre_action = HeadActionType::PASS;
-                pre_action_cost = 1;
-                if (disk.last_query_time.count(head)) {
+    void add_action(HeadActionType type, int target = 0) { actions.push_back(HeadAction{type, target}); }
+
+    friend std::ostream& operator<<(std::ostream& out, const HeadStrategy& strategy) {
+        for (const auto& action : strategy.actions) {
+            switch (action.type) {
+                case HeadActionType::JUMP:
+                    out << "j " + std::to_string(action.target);
+                    return out;
+                case HeadActionType::READ:
+                    out << 'r';
                     break;
-                }
-            }
-            continue;
-        }
-        // 如果有有效的 read，维护信息，继续下一次循环
-        budget -= read_cost;
-    }
-    // 清空末尾的 pass
-    while (!strategy.actions.empty() && strategy.actions.back().type == HeadActionType::PASS) {
-        strategy.actions.pop_back();
-    }
-    // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
-    if (!vaild_strategy || should_jmp[disk_id]) {
-        strategy.actions.clear();
-        // 跳转到收益最大的 slice 的可读取开头
-        double max_gain = 0;
-        int target_slice = 0;
-        for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-            if (disk.slice_margin_gain[slice_id] > max_gain) {
-                max_gain = disk.slice_margin_gain[slice_id];
-                target_slice = slice_id;
+                case HeadActionType::PASS:
+                    out << 'p';
+                    break;
             }
         }
-        if (target_slice != 0) {
-            int target = disk.slice_start[target_slice];
-            while (disk.last_query_time.count(target) == 0) {
-                target = mod(target, 1, global::V, 1);
+        out << '#';
+        return out;
+    }
+};
+
+struct ObjectBlock {
+    int object_id;           // 为 0 时表示这里没有对象
+    int object_size;         // 这里存的是 object_id 物品的大小
+    int object_tag;          // 这里存的是 object_id 物品的标签
+    int object_block_index;  // 这里存的是 object_id 物品的第几个分块
+};
+
+struct Range {
+    int l;
+    int r;
+
+    bool operator<(const Range& rth) const { return l < rth.l; }
+};
+
+class Disk {
+   public:
+    int predict_time;                                   // 需要预处理后多少秒的数据
+    std::vector<ObjectBlock> blocks;                    // 从 1 开始编号，0 号块不使用
+    std::vector<int> query_num;                         // 每个 block 上的查询个数
+    std::vector<double> margin_gain;                    // 每个 block 上的剩余查询收益
+    std::vector<double> start_margin_gain;              // 不考虑衰减的每个block上的查询收益
+    std::vector<std::vector<double>> time_margin_gain;  // 从0开始的后多少秒内的剩余查询收益
+    int total_query_num;                                // 总的查询个数
+    double total_margin_gain;                           // 总的查询收益
+    int empty_block_num;                                // 空余的块数量
+
+    int head[2];  // 磁头的位置
+    int v;        // 磁盘的总大小
+    HeadActionType pre_action[2];
+    int pre_action_cost[2];
+
+    int slice_size;  // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
+    int slice_num;
+    std::vector<int> slice_id;                           // slice_id[block_index] 表示这个位置被分到第几个块
+    std::vector<int> slice_tag;                          // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
+    std::vector<int> slice_last_tag;                     // slice 中最新的 tag
+    std::vector<std::vector<int>> slice_tag_writed_num;  // slice 中每个 tag 的块数量
+    std::vector<int> slice_empty_block_num;              // 每个 slice 中空闲的块数量
+    std::vector<int> slice_start,
+        slice_end;                                            // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]，从 1 开始编号，0 号 slice 不使用
+    std::vector<int> slice_query_num;                         // 每个 slice 中的查询个数
+    std::vector<double> slice_margin_gain;                    // 每个 slice 中的剩余查询收益
+    std::vector<std::vector<double>> time_slice_margin_gain;  // 每个 slice 中在接下来x秒内的剩余查询收益
+    std::vector<int> tag_slice_num;                           // 每个 tag 在该硬盘上的 slice 数量
+
+    std::set<Range> empty_range;  // 未被写入的连续块
+    std::set<int> writed;         // 被写入的块
+
+    Disk(int v, int m)
+
+        : predict_time(105),
+          blocks(v + 1),
+          query_num(v + 1),
+          margin_gain(v + 1),
+          time_margin_gain(v + 1, std::vector<double>(predict_time + 1)),
+          start_margin_gain(v + 1),
+          total_query_num(0),
+          total_margin_gain(0),
+          empty_block_num(v),
+
+          head{1, 1},
+          v(v),
+          pre_action{HeadActionType::JUMP, HeadActionType::JUMP},
+          pre_action_cost{0, 0},
+          slice_size(1024),
+          // slice_size((v + m - 1) / m),
+          slice_num((v - 1) / slice_size + 1),
+          slice_id(v + 1),
+          slice_tag(slice_num + 1),
+          slice_last_tag(slice_num + 1),
+          slice_tag_writed_num(slice_num + 1, std::vector<int>(m + 1)),
+          slice_empty_block_num(slice_num + 1),
+          slice_start(slice_num + 1),
+          slice_end(slice_num + 1),
+          slice_query_num(slice_num + 1),
+          slice_margin_gain(slice_num + 1),
+          time_slice_margin_gain(slice_num + 1, std::vector<double>(predict_time + 1)),
+          tag_slice_num(m + 1) {
+        empty_range.insert(Range{1, v});
+        for (int i = 1; i <= v; i++) {
+            slice_id[i] = (i - 1) / slice_size + 1;
+            slice_empty_block_num[slice_id[i]]++;
+            if (slice_start[slice_id[i]] == 0) {
+                slice_start[slice_id[i]] = i;
             }
-            strategy.add_action(HeadActionType::JUMP, target);
+            slice_end[slice_id[i]] = i;
         }
     }
-    return strategy;
-}
 
-inline std::vector<HeadStrategy> head_strategy_function() {
-    std::vector<HeadStrategy> head_strategies(global::N + 1);
-    std::vector<int> index(global::N + 1);
-    std::iota(index.begin(), index.end(), 0);
-    // 优先模拟收益较小的磁盘，此时收益较大的磁盘仍然具有收益，因此可以保证负载均衡
-    // std::sort(index.begin() + 1, index.end(),
-    //           [&](int i, int j) { return global::disks[i].total_margin_gain < global::disks[j].total_margin_gain; });
-    // 貌似干不过随机？
-    std::vector<int> simulate_read_time(global::N + 1);
-    // 先按照已有策略模拟一次，然后再按照读取次数排序
-    for (int i = 1; i <= global::N; i++) {
-        HeadStrategy strategy = simulate_strategy(i);
-        simulate_read_time[i] =
-            std::count_if(strategy.actions.begin(), strategy.actions.end(),
-                          [](const HeadAction& action) { return action.type == HeadActionType::READ; });
+    Disk(int v, int m, int slice_size)
+        : blocks(v + 1),
+          query_num(v + 1),
+          margin_gain(v + 1),
+          start_margin_gain(v + 1),
+          total_query_num(0),
+          total_margin_gain(0),
+          empty_block_num(v),
+          head{1, 1},
+          v(v),
+          pre_action{HeadActionType::JUMP, HeadActionType::JUMP},
+          pre_action_cost{0, 0},
+          slice_size(slice_size),
+          slice_num((v - 1) / slice_size + 1),
+          slice_id(v + 1),
+          slice_tag(slice_size + 1),
+          slice_last_tag(slice_size + 1),
+          slice_tag_writed_num(slice_size + 1, std::vector<int>(m + 1)),
+          slice_empty_block_num(slice_size + 1),
+          slice_start(slice_size + 1),
+          slice_end(slice_size + 1),
+          slice_query_num(slice_size + 1),
+          slice_margin_gain(slice_size + 1),
+          tag_slice_num(m + 1) {
+        empty_range.insert(Range{1, v});
+        for (int i = 1; i <= v; i++) {
+            slice_id[i] = (i - 1) / slice_size + 1;
+            slice_empty_block_num[slice_id[i]]++;
+            if (slice_start[slice_id[i]] == 0) {
+                slice_start[slice_id[i]] = i;
+            }
+            slice_end[slice_id[i]] = i;
+        }
     }
 
-    std::sort(index.begin() + 1, index.end(),
-              [&simulate_read_time](int i, int j) { return simulate_read_time[i] > simulate_read_time[j]; });
-    for (int i = 1; i <= global::N; i++) {
-        int disk_id = index[i];
-        Disk& disk = global::disks[disk_id];
-        head_strategies[disk_id] = simulate_strategy(disk_id);
-        HeadStrategy& strategy = head_strategies[disk_id];
-        // 判断是否已经扫完块并且下一步是否要强制跳转
-        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
-            should_jmp[disk_id] = 0;
-        } else if ((int)strategy.actions.size() + disk.head > disk.slice_end[disk.slice_id[disk.head]]) {
-            should_jmp[disk_id] = 1;
+    bool is_empty() const { return empty_block_num == v; }
+    // NOTE: slice 不一定完全是空的，但是这里假设 slice 里此时物品很少
+    bool is_slice_empty(int slice_id) const { return slice_last_tag[slice_id] == 0; }
+    bool is_tag_empty(int tag) const { return tag_slice_num[tag] == 0; }
+
+    // 在第 i 个块写入指定的物品
+    void write(int index, ObjectBlock object) {
+        blocks[index] = object;
+        writed.insert(index);
+        empty_block_num--;
+        slice_empty_block_num[slice_id[index]]--;
+        if (slice_tag_writed_num[slice_id[index]][object.object_tag] == 0) {
+            slice_tag[slice_id[index]] |= 1 << object.object_tag;
+            tag_slice_num[object.object_tag]++;
         }
-        // 模拟磁头动作
-        simulate_head(disk, strategy);
-        // 如果是跳转的话，将该块对应的其他块的信息清空
-        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
-            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]];
-                 pos++) {
-                ObjectBlock& block = disk.blocks[pos];
-                if (block.object_id == 0 || !disk.last_query_time.count(pos)) continue;
-                Object& object = global::objects[block.object_id];
-                for (int i = 0; i < 3; i++) {
-                    if (object.disk_id[i] == disk_id) {
-                        continue;
-                    }
-                    Disk& diskt = global::disks[object.disk_id[i]];
-                    for (int j = 1; j <= object.size; j++) {
-                        diskt.clean_gain(object.block_id[i][j]);
-                    }
-                }
-            }
+        slice_last_tag[slice_id[index]] = object.object_tag;
+        slice_tag_writed_num[slice_id[index]][object.object_tag]++;
+
+        // 维护 empty_range
+        auto it = empty_range.upper_bound(Range{index, std::numeric_limits<int>::max()});
+        it--;
+        Range range = *it;
+        empty_range.erase(it);
+        if (range.l <= index - 1) {
+            empty_range.insert(Range{range.l, index - 1});
+        }
+        if (index + 1 <= range.r) {
+            empty_range.insert(Range{index + 1, range.r});
         }
     }
-    return head_strategies;
-}
 
-// ---------------交互----------------
-// 应该是不需要修改
-inline void run() {
-    io::init_input();
-    init_local();
-    io::init_output();
-    for (global::timestamp = 1; global::timestamp <= global::T + 105; global::timestamp++) {
-        // 时间片交互事件
-        io::timestamp_align(global::timestamp);
+    // 释放第 i 个块
+    void erase(int index, int timestamp) {
+        // 释放查询
+        clean_query(index);
+        slice_margin_gain[slice_id[index]] -= margin_gain[index];
+        total_margin_gain -= margin_gain[index];
+        start_margin_gain[index] = 0;
+        margin_gain[index] = 0;
 
-        // 对象删除事件
-        auto deleted_objects = io::delete_object_input();
-        deleted_requests.clear();
-        for (int object_id : deleted_objects) {
-            delete_object(object_id);
-        }
-        io::delete_object_output(deleted_requests);
-
-        // 对象写入事件
-        auto write_objects = io::write_object_input();
-        // NOTE: 模拟写入的任务交给 write_strategy_function
-        auto write_strategies = write_strategy_function(write_objects);
-        io::write_object_output(write_strategies);
-
-        // 对象读取事件
-        auto read_objects = io::read_object_input();
-        for (const auto& [req_id, object_id] : read_objects) {
-            Object& object = global::objects[object_id];
-            object.add_request(req_id);
-            for (int i = 0; i < 3; i++) {
-                Disk& disk = global::disks[object.disk_id[i]];
-                for (int j = 1; j <= object.size; j++) {
-                    disk.query(object.block_id[i][j], global::timestamp);
-                }
+        // 释放块
+        writed.erase(index);
+        empty_block_num++;
+        slice_empty_block_num[slice_id[index]]++;
+        slice_tag_writed_num[slice_id[index]][blocks[index].object_tag]--;
+        if (slice_tag_writed_num[slice_id[index]][blocks[index].object_tag] == 0) {
+            slice_tag[slice_id[index]] &= ~(1 << blocks[index].object_tag);
+            tag_slice_num[blocks[index].object_tag]--;
+            if (slice_last_tag[slice_id[index]] == blocks[index].object_tag) {
+                // 虽然不一定是空的，但是此时认为这个 slice 已经空了
+                slice_last_tag[slice_id[index]] = 0;
             }
         }
+        blocks[index] = ObjectBlock{0, 0, 0, 0};
 
-        // NOTE: 模拟磁盘头动作的任务交给 head_strategy_function
-        completed_requests.clear();
-        auto head_strategies = head_strategy_function();
-        io::read_object_output(head_strategies, completed_requests);
-        for (int i = 1; i <= global::N; ++i) {
-            for (int j = 1; j <= global::V; ++j) {
-                if (global::disks[i].blocks[j].object_id != 0) {
-                    global::disks[i].update(j);
-                }
-            }
+        // 维护 empty_range
+        auto it = empty_range.lower_bound(Range{index, 0});
+        int r = index;
+        if (it != empty_range.end() && it->l == index + 1) {
+            r = it->r;
+        }
+        int l = index;
+        if (it != empty_range.begin() && std::prev(it)->r == index - 1) {
+            l = std::prev(it)->l;
+        }
+        if (l != index) {
+            empty_range.erase(std::prev(it));
+        }
+        if (r != index) {
+            empty_range.erase(it);
+        }
+        empty_range.insert(Range{l, r});
+    }
+    void query_slice(int index, int timestamp) {
+        const ObjectBlock& object = blocks[index];
+        assert(object.object_id != 0);
+        double gain = (double)(object.object_size + 1);
+        for (int i = 0; i < predict_time; ++i) {
+            time_slice_margin_gain[slice_id[index]][(timestamp + i) % predict_time] += gain * (1.0 + SIMLUATE_MULT[i] * i);
         }
     }
-}
-}  // namespace baseline
+    void query(int index, int timestamp) {
+        const ObjectBlock& object = blocks[index];
+        assert(object.object_id != 0);
+        increase_query(index);
+        double gain = (double)(object.object_size + 1) / object.object_size;
+        // gain *= object.object_size;
+        slice_margin_gain[slice_id[index]] += gain;
+        margin_gain[index] += gain;
+        start_margin_gain[index] += gain;
+        total_margin_gain += gain;
+    }
+    // 更新全局贡献
+    void update(int index) {
+        const ObjectBlock& object = blocks[index];
+        assert(object.object_id != 0);
+        slice_margin_gain[slice_id[index]] -= margin_gain[index];
+        total_margin_gain -= margin_gain[index];
+        margin_gain[index] = ALPHA * margin_gain[index];
+        // margin_gain[index] += 0.01 * start_margin_gain[index];
+        slice_margin_gain[slice_id[index]] += margin_gain[index];
+        total_margin_gain += margin_gain[index];
+    }
+    // 在其他块被占用后，更新当前块的贡献
+    void clean_gain(int index, int timestamp) {
+        const ObjectBlock& object = blocks[index];
+        assert(object.object_id != 0);
+        slice_margin_gain[slice_id[index]] -= margin_gain[index];
+        total_margin_gain -= margin_gain[index];
+        margin_gain[index] = 0;
+        start_margin_gain[index] = 0;
+    }
+    // 读取第 i 个块
+    // 因为块有可能是被其它硬盘读取的，所以 block_index 并不一定等于 head
+    void read(int block_index, int timestamp) {
+        const ObjectBlock& object = blocks[block_index];
+        if (object.object_id == 0) {
+            return;
+        }
+        clean_query(block_index);
+        clean_gain(block_index, timestamp);
+    }
+    // 降低当前 block 的贡献
+    void decease_gain(int block_index, int passed_time, int timestamp) {
+        const ObjectBlock& object = blocks[block_index];
+        assert(object.object_id != 0);
+        double gain = (double)(object.object_size + 1) / object.object_size;
+        start_margin_gain[block_index] -= gain;
+        gain *= GAIN_MULT[passed_time];
+        margin_gain[block_index] -= gain;
+        slice_margin_gain[slice_id[block_index]] -= gain;
+        total_margin_gain -= gain;
+    }
+    // 将指定询问的贡献减去
+    void decease_slice_gain(int block_index, int last_time, int timestamp) {
+        const ObjectBlock& object = blocks[block_index];
+        assert(object.object_id != 0);
+        for (int i = 0; i < predict_time; ++i) {
+            if (last_time + i >= timestamp)
+                time_slice_margin_gain[slice_id[block_index]][(last_time + i) % predict_time] -=
+                    (double)(object.object_size + 1) * (1.0 + i * SIMLUATE_MULT[i]);
+        }
+    }
+    // 增加当前 block 的查询个数
+    void increase_query(int block_index) {
+        const ObjectBlock& object = blocks[block_index];
+        assert(object.object_id != 0);
+        query_num[block_index]++;
+        slice_query_num[slice_id[block_index]]++;
+        total_query_num++;
+    }
+
+    // 降低当前 block 的查询个数
+    void decease_query(int block_index) {
+        const ObjectBlock& object = blocks[block_index];
+        assert(object.object_id != 0);
+        query_num[block_index]--;
+        slice_query_num[slice_id[block_index]]--;
+        total_query_num--;
+    }
+
+    // 清除当前 block 的查询个数
+    void clean_query(int block_index) {
+        const ObjectBlock& object = blocks[block_index];
+        assert(object.object_id != 0);
+        slice_query_num[slice_id[block_index]] -= query_num[block_index];
+        total_query_num -= query_num[block_index];
+        query_num[block_index] = 0;
+    }
+    double calc_slice_contribution(int slice_id, int timestamp, int cost_time) const {
+        double predict_gain = 0;
+        for (int i = 0; i < cost_time; ++i) predict_gain += time_slice_margin_gain[slice_id][(timestamp + i) % predict_time];
+        return predict_gain;
+    }
+    void debug_check() {
+        for (int i = 1; i <= v; i++) {
+            assert(query_num[i] >= 0);
+            assert(margin_gain[i] >= -1e-10);
+            assert(start_margin_gain[i] >= -1e-10);
+        }
+    }
+};
+
+struct ObjectReadRequest {
+    int req_id;
+    int object_id;
+};
+
+struct ObjectReadStatus {
+    int req_id;
+    int readed_size;
+    std::vector<char> readed;  // 从 1 开始标号，0 号块不使用
+    int timestamp;
+    bool uncleand_gain = false;
+};
+
+struct ObjectReadTime {
+    int req_id;
+    int timestamp;
+};
+
+class Object {
+   public:
+    int id;
+    int size;
+    int tag;
+    int disk_id[3];                                  // 三个副本的目标硬盘
+    std::unordered_map<int, int> read_request_time;  // (req_id, timestamp)
+    std::vector<int> block_id[3];                    // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
+    std::deque<ObjectReadTime> read_queue;           // 读取请求的队列，存储的是请求的编号和时间戳
+   private:
+    std::unordered_set<int>
+        unclean_gain_requests;                                // 没有被清理掉贡献的请求，注意这里的请求可能已经被完成，因此只应该用于判断，不应该用于枚举
+    std::unordered_map<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
+    std::vector<int> request_number;                          // 第 i 个分块上的未完成请求数量
+   public:
+    Object() = default;
+    Object(ObjectWriteStrategy strategy) {
+        id = strategy.object.id;
+        size = strategy.object.size;
+        tag = strategy.object.tag;
+        for (int i = 0; i < 3; i++) {
+            disk_id[i] = strategy.disk_id[i];
+            block_id[i] = strategy.block_id[i];
+        }
+        request_number.resize(size + 1);
+    }
+
+    void add_request(int req_id, int timestamp) {
+        read_request_time[req_id] = timestamp;
+        read_requests[req_id] = ObjectReadStatus{req_id, 0, std::vector<char>(size + 1), timestamp, true};
+        for (int i = 1; i <= size; i++) {
+            request_number[i]++;
+        }
+        read_queue.push_back(ObjectReadTime{req_id, timestamp});
+        unclean_gain_requests.insert(req_id);
+    }
+
+    // 获取这个对象第 block_index 个块的未完成请求数量，block_num 从 1 开始编号
+    // 返回 0 说明没有请求
+    int get_request_number(int block_index) const { return request_number[block_index]; }
+
+    // 读取这个对象第 block_index 个块，返回所有被完成的读取请求的编号
+    std::vector<int> read(int block_index) {
+        std::vector<int> completed_requests;
+        for (auto& [req_id, request] : read_requests) {
+            if (request.readed[block_index] == false) {
+                request.readed[block_index] = true;
+                request.readed_size++;
+                request_number[block_index]--;
+            }
+            if (request.readed_size == size) {
+                completed_requests.push_back(req_id);
+            }
+        }
+        for (auto req_id : completed_requests) {
+            read_requests.erase(req_id);
+            if (unclean_gain_requests.count(req_id)) {
+                unclean_gain_requests.erase(req_id);
+            }
+        }
+        return completed_requests;
+    }
+
+    // 获取超时的请求
+    std::vector<ObjectReadStatus> get_timeout_requests(int timestamp, int rel_lim) {
+        std::vector<ObjectReadStatus> timeout_requests;
+        while (!read_queue.empty() && read_queue.front().timestamp + rel_lim <= timestamp) {
+            int req_id = read_queue.front().req_id;
+            read_queue.pop_front();
+
+            if (!read_requests.count(req_id)) {
+                continue;
+            }
+
+            ObjectReadStatus request = read_requests[req_id];
+            read_requests.erase(req_id);
+
+            request.uncleand_gain = false;
+            if (unclean_gain_requests.count(req_id)) {
+                request.uncleand_gain = true;
+                unclean_gain_requests.erase(req_id);
+            }
+            timeout_requests.push_back(request);
+        }
+        return timeout_requests;
+    }
+
+    // 标记某个请求为已经清理 gain（由于一个物品一定在某个 slice
+    // 中，被清理时一定会将目前所有的请求都清理掉，所以直接清空即可）
+    void clean_gain() { unclean_gain_requests.clear(); }
+
+    // 放弃某个请求
+    void give_up_request(int req_id) {
+        assert(read_requests.count(req_id));
+        read_requests.erase(req_id);
+        if (unclean_gain_requests.count(req_id)) {
+            unclean_gain_requests.erase(req_id);
+        }
+    }
+
+    const std::unordered_map<int, ObjectReadStatus>& get_read_status() const { return read_requests; }
+};

@@ -1,4 +1,5 @@
 #include <iostream>
+
 #include "baseline/baseline.hpp"
 
 int main() {
@@ -8,5 +9,5 @@ int main() {
     std::ios::sync_with_stdio(false);
 
     baseline::run();
-    return 0;    
+    return 0;
 }
