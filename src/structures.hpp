@@ -273,11 +273,11 @@ class Disk {
         empty_range.insert(Range{l, r});
     }
 
-    void query(int index, int timestamp) {
+    void query(int index, int timestamp) { 
         const ObjectBlock& object = blocks[index];
         assert(object.object_id != 0);
         increase_query(index);
-        double gain = (double)(object.object_size + 1) / object.object_size + timestamp / 1800 * object.object_size;
+        double gain = (double)(object.object_size + 1) / object.object_size;
         // gain *= object.object_size;
         slice_margin_gain[slice_id[index]] += gain;
         margin_gain[index] += gain;
