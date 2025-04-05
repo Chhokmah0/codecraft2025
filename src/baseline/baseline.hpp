@@ -235,8 +235,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         int size_i = -objects[i].size;
         int size_j = -objects[j].size;
         // FIXME: 这里的实现有点问题，但不知道为啥有用
-        return std::tie(size_i, read_count_i, objects[i].tag) <
-               std::tie(size_j, read_count_j, objects[j].tag);
+        return std::tie(size_i, read_count_i, objects[i].tag) < std::tie(size_j, read_count_j, objects[j].tag);
     });
 
     for (size_t opt = 0; opt < object_index.size(); opt++) {
@@ -507,10 +506,18 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
         head_strategies[disk_id][head_id] = simulate_strategy(disk_id, head_id);
         HeadStrategy& strategy = head_strategies[disk_id][head_id];
         // 判断是否已经扫完块并且下一步是否要强制跳转
+        // 如果 strategy.actions.size() + disk.head[head_id] 大于最后一个有查询的块，那么下一个时间片就可以跳转
+        int slice_last_query_p = disk.slice_end[disk.slice_id[disk.head[head_id]]];
+        for (int i = disk.slice_end[disk.slice_id[disk.head[head_id]]];
+             i >= disk.slice_start[disk.slice_id[disk.head[head_id]]]; i--) {
+            if (disk.query_num[i] != 0) {
+                slice_last_query_p = i;
+                break;
+            }
+        }
         if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
             should_jmp[disk_id][head_id] = false;
-        } else if ((int)strategy.actions.size() + disk.head[head_id] >=
-                   disk.slice_end[disk.slice_id[disk.head[head_id]]]) {
+        } else if ((int)strategy.actions.size() + disk.head[head_id] > slice_last_query_p) {
             should_jmp[disk_id][head_id] = true;
         }
         // 模拟磁头动作
@@ -533,7 +540,8 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
             assert(std::abs(disk.slice_margin_gain[disk.slice_id[strategy.actions[0].target]]) <= 1e-10);
         } else if (!strategy.actions.empty() && (int)strategy.actions.size() + disk.head[head_id] <=
                                                     disk.slice_end[disk.slice_id[disk.head[head_id]]]) {
-            // std::cerr << disk.head[head_id] << " " << disk_id << " " << head_id << " " << disk.slice_end[disk.slice_id[disk.head[head_id]]] << '\n';
+            // std::cerr << disk.head[head_id] << " " << disk_id << " " << head_id << " " <<
+            // disk.slice_end[disk.slice_id[disk.head[head_id]]] << '\n';
             for (int pos = disk.head[head_id]; pos != disk.slice_end[disk.slice_id[disk.head[head_id]]]; pos++) {
                 ObjectBlock& block = disk.blocks[pos];
                 if (block.object_id == 0 || disk.query_num[pos] == 0) continue;
@@ -585,7 +593,7 @@ inline void run() {
     io::init_input();
     init_local();
     io::init_output();
-    int lst = 0, done_num = 0;  // 一个统计有多少查询被busy,完成了多少的变量。
+    int busy_request_num = 0, done_request_num = 0;  // 一个统计有多少查询被busy,完成了多少的变量。
     for (global::timestamp = 1; global::timestamp <= global::T + 105; global::timestamp++) {
         // debug
         // std::cerr << "timestamp: " << global::timestamp << std::endl;
@@ -626,10 +634,10 @@ inline void run() {
         completed_requests.clear();
         auto head_strategies = head_strategy_function();
         io::read_object_output(head_strategies, completed_requests);
-        done_num += completed_requests.size();
+        done_request_num += completed_requests.size();
         // 获取放弃/超时的读取请求
         auto timeout_read_requests = timeout_read_requests_function();
-        lst += (int)timeout_read_requests.size();
+        busy_request_num += (int)timeout_read_requests.size();
         io::busy_requests_output(timeout_read_requests);
         // 一轮结束，更新磁盘的状态
         for (int i = 1; i <= global::N; ++i) {
@@ -645,9 +653,9 @@ inline void run() {
         if (global::timestamp % 1800 == 0) {
             io::garbage_collection_input();
             io::garbage_collection_output();
-            std::cerr << global::timestamp << " total busy:" << lst << ",total done: " << done_num << '\n';
+            std::cerr << global::timestamp << " total busy:" << busy_request_num << ",total done: " << done_request_num << '\n';
         }
     }
-    std::cerr << "final total busy:" << " " << lst << ",total done: " << done_num << '\n';
+    std::cerr << "final total busy:" << " " << busy_request_num << ",total done: " << done_request_num << '\n';
 }
 }  // namespace baseline
