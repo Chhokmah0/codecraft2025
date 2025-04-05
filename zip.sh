@@ -1,0 +1,1 @@
+zip -r codecraft2025.zip ./src ./CMakeLists.txt 
