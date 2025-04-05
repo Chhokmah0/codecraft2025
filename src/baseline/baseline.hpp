@@ -212,6 +212,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                         empty_slice_num++;
                     }
                 }
+                bool is_tag_id = slice_id == object.tag;
 
                 struct SliceValue {
                     bool has_tag;
@@ -219,40 +220,41 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                     int empty_block_num;
                     int empty_slice_num;
                     bool neighbor_has_tag;
+                    bool is_tag_id;
 
                     bool operator<(const SliceValue& other) const {
                         // 优先拥有 tag
-                        // 优先 tag 数量少的 slice
-                        // 优先剩余空间大的 slice
-                        // 优先剩余空的 slice 多的 disk
-                        // 优先相邻的 slice 也有 tag 的 slice
                         if (has_tag != other.has_tag) {
                             return has_tag > other.has_tag;
                         }
+                        // 优先选择 tag 数量少的 slice
                         if (tag_num != other.tag_num) {
                             return tag_num < other.tag_num;
                         }
+                        // 优先选择空闲块数多的 slice
                         if (empty_block_num != other.empty_block_num) {
                             return empty_block_num > other.empty_block_num;
                         }
+                        // 优先选择空闲 slice 多的 disk
                         if (empty_slice_num != other.empty_slice_num) {
                             return empty_slice_num > other.empty_slice_num;
                         }
+                        // 优先选择邻居有 tag 的 slice
                         if (neighbor_has_tag != other.neighbor_has_tag) {
                             return neighbor_has_tag > other.neighbor_has_tag;
                         }
                         return false;
                     }
                 };
-                return SliceValue{has_tag, tag_num, empty_block_num, empty_slice_num, neighbor_has_tag};
+                return SliceValue{has_tag, tag_num, empty_block_num, empty_slice_num, neighbor_has_tag, is_tag_id};
             };
             // TODO：如果不 shuffle 的话，不同 tag 的物品会被按顺序放到硬盘上，使得 neighbor_has_tag 的 slice
             // 数量大大减少
             std::shuffle(disk_block.begin(), disk_block.end(), global::rng);
-            std::sort(disk_block.begin(), disk_block.end(),
-                      [&](const auto& a, const auto& b) { return slice_key(a) < slice_key(b); });
-            // 选出第一个 slice
-            auto [target_disk_id, target_slice_id] = disk_block[0];
+            auto it = std::min_element(disk_block.begin(), disk_block.end(),
+                                       [&](const auto& a, const auto& b) { return slice_key(a) < slice_key(b); });
+            // 选出最大的 slice
+            auto [target_disk_id, target_slice_id] = *it;
 
             if (target_disk_id == -1) {
                 // 应该不会出现这种情况
@@ -398,17 +400,25 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
     }
 
     // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
+    // 但是如果当前位置正好是前两个收益最大的 slice 块，则无需跳转
+    std::vector<int> slice_id(disk.slice_num + 1);
+    std::iota(slice_id.begin(), slice_id.end(), 0);
+    std::partial_sort(slice_id.begin() + 1, slice_id.begin() + 3, slice_id.end(), [&](int i, int j) {
+        int other_head_slice_id = disk.slice_id[disk.head[head_id ^ 1]];
+        if ((i == other_head_slice_id) == (j == other_head_slice_id)) {
+            return disk.slice_margin_gain[i] > disk.slice_margin_gain[j];
+        }
+        return (i == other_head_slice_id) < (j == other_head_slice_id);
+    });
+    // 这里的 slice_id[1] 和 slice_id[2] 是收益最大的两个 slice
+    if (disk.slice_id[disk.head[head_id]] == slice_id[1] || disk.slice_id[disk.head[head_id]] == slice_id[2]) {
+        should_jmp[disk_id][head_id] = false;
+    }
+
     if (!valid_strategy || should_jmp[disk_id][head_id]) {
         strategy.actions.clear();
         // 跳转到收益最大的 slice 的可读取开头
-        double max_gain = 0;
-        int target_slice = 0;
-        for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-            if (disk.slice_margin_gain[slice_id] >= max_gain && disk.slice_id[disk.head[head_id ^ 1]] != slice_id) {
-                max_gain = disk.slice_margin_gain[slice_id];
-                target_slice = slice_id;
-            }
-        }
+        int target_slice = slice_id[1];
         if (target_slice != 0) {
             int target = disk.slice_start[target_slice];
             while (disk.query_num[target] == 0) {
@@ -470,7 +480,7 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
             for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]];
                  pos++) {
                 ObjectBlock& block = disk.blocks[pos];
-                if (block.object_id == 0 || disk.query_num[pos] == 0) continue;
+                if (block.object_id == 0 || disk.query_num[pos] == 0 || disk.margin_gain[pos] == 0) continue;
                 Object& object = global::objects[block.object_id];
                 object.clean_gain();
                 for (int x = 0; x < 3; x++) {
@@ -485,9 +495,10 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
                                                     disk.slice_end[disk.slice_id[disk.head[head_id]]]) {
             // std::cerr << disk.head[head_id] << " " << disk_id << " " << head_id << " " <<
             // disk.slice_end[disk.slice_id[disk.head[head_id]]] << '\n';
-            for (int pos = disk.head[head_id]; pos != disk.slice_end[disk.slice_id[disk.head[head_id]]]; pos++) {
+            int start = mod(disk.head[head_id], 1, global::V, strategy.actions.size());
+            for (int pos = start; pos <= disk.slice_end[disk.slice_id[start]]; pos++) {
                 ObjectBlock& block = disk.blocks[pos];
-                if (block.object_id == 0 || disk.query_num[pos] == 0) continue;
+                if (block.object_id == 0 || disk.query_num[pos] == 0 || disk.margin_gain[pos] == 0) continue;
                 Object& object = global::objects[block.object_id];
                 object.clean_gain();
                 for (int x = 0; x < 3; x++) {
