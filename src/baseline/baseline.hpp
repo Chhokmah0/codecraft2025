@@ -163,7 +163,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         int time_block = std::min((global::timestamp - 1) / 1800 + 1, global::fre_len);
         int read_count = suffix_sum_read[objects[i].tag][time_block];
         int size = objects[i].size;
-        return std::make_tuple(-size, read_count, objects[i].tag);
+        return std::make_tuple(size, read_count, objects[i].tag);
     };
     std::sort(object_index.begin(), object_index.end(), [&](int i, int j) {
         // FIXME: 这里的实现有点问题，但不知道为啥有用
