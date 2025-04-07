@@ -567,9 +567,6 @@ inline void run() {
     io::init_output();
     int busy_request_num = 0, done_request_num = 0;  // 一个统计有多少查询被busy,完成了多少的变量。
     for (global::timestamp = 1; global::timestamp <= global::T + 105; global::timestamp++) {
-        if (global::timestamp >= 18000) {
-            return;
-        }
         // debug
         // std::cerr << "timestamp: " << global::timestamp << '\n';
         // for (int i = 1; i <= global::N; ++i) {
