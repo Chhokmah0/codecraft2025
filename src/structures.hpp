@@ -145,9 +145,7 @@ class Object {
         return timeout_requests;
     }
 
-    void clean_gain() {
-        unclean_gain_requests.clear();
-    }
+    void clean_gain() { unclean_gain_requests.clear(); }
 
     // 放弃某个请求
     void erase_request(int req_id) {
