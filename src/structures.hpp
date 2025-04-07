@@ -28,7 +28,7 @@ constexpr auto generate_simluate_mult() {
         SIMLUATE_MULT[i] = i <= 10 ? 0.005 : 0.01;
     }
     for (size_t i = 0; i < SIMLUATE_MULT.size(); ++i) {
-        SIMLUATE_MULT[i] = (i == 0) ? 1 : SIMLUATE_MULT[i - 1] - SIMLUATE_MULT[i];
+        SIMLUATE_MULT[i] = (i == 0) ? 2 : SIMLUATE_MULT[i - 1] - SIMLUATE_MULT[i];
     }
     return SIMLUATE_MULT;
 }
@@ -145,9 +145,7 @@ class Object {
         return timeout_requests;
     }
 
-    void clean_gain() {
-        unclean_gain_requests.clear();
-    }
+    void clean_gain() { unclean_gain_requests.clear(); }
 
     // 放弃某个请求
     void erase_request(int req_id) {
