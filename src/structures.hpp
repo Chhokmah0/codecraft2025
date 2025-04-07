@@ -25,10 +25,10 @@ constexpr auto generate_gain_mult() {
 constexpr auto generate_simluate_mult() {
     std::array<double, 120> SIMLUATE_MULT = {};
     for (size_t i = 0; i < SIMLUATE_MULT.size(); ++i) {
-        SIMLUATE_MULT[i] = i <= 10 ? 0.005 : 0.01;
+        SIMLUATE_MULT[i] = i <= 10 ? 0.01 : 0.04;
     }
     for (size_t i = 0; i < SIMLUATE_MULT.size(); ++i) {
-        SIMLUATE_MULT[i] = (i == 0) ? 1 : SIMLUATE_MULT[i - 1] - SIMLUATE_MULT[i];
+        SIMLUATE_MULT[i] = (i == 0) ? 1 : SIMLUATE_MULT[i - 1] + SIMLUATE_MULT[i];
     }
     return SIMLUATE_MULT;
 }
@@ -43,8 +43,8 @@ struct ObjectWriteRequest {
 
 struct ObjectWriteStrategy {
     ObjectWriteRequest object;
-    int disk_id[3];   // 三个副本的目标硬盘
-    int slice_id[3];  // 三个副本的目标 slice
+    int disk_id[3];                // 三个副本的目标硬盘
+    int slice_id[3];               // 三个副本的目标 slice
     std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意 object 的块和硬盘上的块都是从 1
                                    // 开始编号的，block_id[0] 不使用。
 
@@ -84,10 +84,10 @@ class Object {
     int id;
     int size;
     int tag;
-    int disk_id[3];   // 三个副本的目标硬盘
-    int slice_id[3];  // 三个副本的目标 slice
-    std::vector<int> block_id[3];  // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
-    std::deque<ObjectReadTime> read_queue;  // 读取请求的队列，存储的是请求的编号和时间戳
+    int disk_id[3];                                           // 三个副本的目标硬盘
+    int slice_id[3];                                          // 三个副本的目标 slice
+    std::vector<int> block_id[3];                             // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
+    std::deque<ObjectReadTime> read_queue;                    // 读取请求的队列，存储的是请求的编号和时间戳
     std::unordered_map<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
     std::vector<int> request_number;                          // 第 i 个分块上的未完成请求数量
     std::unordered_set<int> unclean_gain_requests;            // 被清空收益的请求
@@ -302,13 +302,13 @@ class Disk {
     HeadActionType pre_action[2];
     int pre_action_cost[2];
 
-    int slice_size;                           // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
-    int slice_num;                            // slice 的数量
-    std::vector<int> slice_id;                // slice_id[block_index] 表示这个位置被分到第几个块
-    std::vector<int> slice_start, slice_end;  // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]
-    std::vector<int> slice_empty_block_num;   // 每个 slice 中空闲的块数量
-    std::vector<int> slice_tag;       // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
-    std::vector<int> slice_last_tag;  // slice 中最后放入的物品的 tag
+    int slice_size;                                      // 分成若干个大块（Slice），每个 slice 的大小为 slice_size
+    int slice_num;                                       // slice 的数量
+    std::vector<int> slice_id;                           // slice_id[block_index] 表示这个位置被分到第几个块
+    std::vector<int> slice_start, slice_end;             // 第 i 个 slice 的范围为 [slice_start[i], slice_end[i]]
+    std::vector<int> slice_empty_block_num;              // 每个 slice 中空闲的块数量
+    std::vector<int> slice_tag;                          // slice 内存储的对象的 tag，用 2 进制表达，0 表示没有对象
+    std::vector<int> slice_last_tag;                     // slice 中最后放入的物品的 tag
     std::vector<std::vector<int>> slice_tag_writed_num;  // slice 中每个 tag 的块数量
     std::vector<int> slice_request_num;                  // 每个 slice 中的查询个数
 
@@ -487,7 +487,7 @@ class Disk {
             return 0;
         }
         double gain = 0;
-        for (int i = 0; i < slice_time_requests[slice_id].size(); i++) {
+        for (int i = 0; i < (int)slice_time_requests[slice_id].size(); i++) {
             gain += slice_time_requests[slice_id][i].get_gain(cur_time);
         }
         return gain;

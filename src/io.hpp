@@ -129,11 +129,16 @@ inline void garbage_collection_input() {
 }
 
 // TODO: 临时方案
-inline void garbage_collection_output() {
+inline void garbage_collection_output(const std::vector<std::vector<std::pair<int, int>>>& used_swap) {
     std::cout << "GARBAGE COLLECTION" << '\n';
-    for (int i = 0; i < global::N; i++) {
-        std::cout << "0\n";
+    for (int i = 1; i <= global::N; i++) {
+        std::cout << used_swap[i].size() << '\n';
+        std::cerr << global::timestamp << " disk " << i << " " << used_swap[i].size() << '\n';
+        for (auto [start_part, end_part] : used_swap[i]) {
+            std::cout << start_part << " " << end_part << '\n';
+        }
     }
+    std::cerr.flush();
     std::cout.flush();
 }
 
