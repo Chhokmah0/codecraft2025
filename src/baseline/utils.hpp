@@ -25,6 +25,45 @@ inline int move_head(int disk_id, int slice_id, int p, int step) {
 inline std::vector<int> deleted_requests;
 inline std::vector<int> completed_requests;
 
+inline void clean_gain_after_head(Disk& disk, int head) {
+    for (int pos = head; pos <= disk.slice_end[disk.slice_id[head]]; pos++) {
+        ObjectBlock& block = disk.blocks[pos];
+        if (block.object_id == 0 || disk.request_num[pos] == 0) continue;
+        Object& object = global::objects[block.object_id];
+        // 如果该 object 在这个硬盘上的所有 block 都在 after_head 往后，清除（包揽）这个物品的查询贡献
+        bool should_clean_object = true;
+        int copy_id = disk.get_copy_id(object);
+        for (int i = 1; i <= object.size; i++) {
+            if (object.block_id[copy_id][i] < head) {
+                should_clean_object = false;
+                break;
+            }
+        }
+        if (!should_clean_object) continue;
+        // 清理 gain
+        for (int i = 0; i < 3; i++) {
+            Disk& disk = global::disks[object.disk_id[i]];
+            disk.clean_object_gain(object);
+        }
+        object.clean_gain();
+    }
+}
+
+inline void give_up_request(int req_id) {
+    assert(global::request_object_id.count(req_id));
+    int object_id = global::request_object_id[req_id];
+    Object& object = global::objects[object_id];
+    // 维护磁盘的状态
+    for (int i = 0; i < 3; i++) {
+        Disk& disk = global::disks[object.disk_id[i]];
+        disk.erase_request(object, req_id);
+    }
+    // 维护对象的状态
+    object.erase_request(req_id);
+    // 维护全局的状态
+    global::request_object_id.erase(req_id);
+}
+
 inline void delete_object(int object_id) {
     assert(global::objects.count(object_id));
 
