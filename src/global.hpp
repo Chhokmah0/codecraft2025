@@ -23,5 +23,5 @@ inline int fre_len;
 inline int timestamp;                                   // 全局时间戳
 inline std::vector<Disk> disks;                         // 从 1 开始编号
 inline std::unordered_map<int, Object> objects;         // (object_id, Object)
-inline std::unordered_map<int, bool> used_del_request;  // (request_id, 其105个时间片的贡献是否被删除)
+inline std::unordered_map<int, int> request_object_id;  // (req_id, object_id)
 }  // namespace global

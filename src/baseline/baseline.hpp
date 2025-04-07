@@ -15,6 +15,9 @@
 
 namespace baseline {
 
+// 按照 global -> object -> disk 的顺序添加数据
+// 按照 disk -> object -> global 的顺序删除数据
+
 // run 函数自动执行了删除对象时的信息维护
 // 写入对象、模拟磁头动作的信息维护任务交给 write_strategy_function 和 head_strategy_function
 
@@ -27,7 +30,9 @@ inline std::vector<std::vector<double>> similarity;    // tag 两两之间的相
 
 // 本地初始化
 inline void init_local() {
-    global::disks.resize(global::N + 1, Disk(global::V, global::M));
+    for (int i = 0; i <= global::N; i++) {
+        global::disks.push_back(Disk(i, global::V, global::M));
+    }
     should_jmp.resize(global::N + 1);
 
     suffix_sum_read = global::fre_read;
@@ -157,14 +162,12 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
 
     std::vector<int> object_index(objects.size());
     std::iota(object_index.begin(), object_index.end(), 0);
-    // 将具有相同 tag 的元素放在一起
-    // 如果一个 tag 在之后的读取次数最多，则优先放置
-    // 并优先放大的
+    // 给一个 object 的打分函数
     auto object_key = [&](int i) {
         int time_block = std::min((global::timestamp - 1) / 1800 + 1, global::fre_len);
         int read_count = suffix_sum_read[objects[i].tag][time_block];
         int size = objects[i].size;
-        return std::make_tuple(-size, read_count, objects[i].tag);
+        return std::make_tuple(size, read_count, objects[i].tag);
     };
     std::sort(object_index.begin(), object_index.end(), [&](int i, int j) {
         // FIXME: 这里的实现有点问题，但不知道为啥有用
@@ -290,7 +293,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
 inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
     Disk& disk = global::disks[disk_id];
     HeadStrategy strategy;
-    if (disk.total_query_num == 0) {
+    if (disk.total_request_num == 0) {
         return strategy;
     }
     // 第 n 次 READ 时所消耗的令牌，第 8 次往后都是 16
@@ -317,7 +320,7 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
             } else {
                 read_count = 0;
             }
-            if (disk.query_num[p] == 0) {
+            if (disk.request_num[p] == 0) {
                 // 磁头在空闲块上时才可以 PASS
                 dp[0][0] = global::G - 1;
                 pre_read_count[0][0] = read_count;
@@ -335,7 +338,7 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
         }
 
         // 计算 dp[i][j]
-        if (disk.query_num[p] == 0) {
+        if (disk.request_num[p] == 0) {
             // 磁头在空闲块上时才可以 PASS
             int max_budget_read_count = std::max_element(dp[i - 1].begin(), dp[i - 1].end()) - dp[i - 1].begin();
             int max_budget = dp[i - 1][max_budget_read_count];
@@ -393,7 +396,7 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
     bool valid_strategy = false;
     int p = disk.head[head_id];
     for (const auto& action : strategy.actions) {
-        if (action.type == HeadActionType::READ && disk.query_num[p] != 0) {
+        if (action.type == HeadActionType::READ && disk.request_num[p] != 0) {
             valid_strategy = true;
             break;
         }
@@ -407,7 +410,8 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
     std::partial_sort(slice_id.begin() + 1, slice_id.begin() + 3, slice_id.end(), [&](int i, int j) {
         int other_head_slice_id = disk.slice_id[disk.head[head_id ^ 1]];
         if ((i == other_head_slice_id) == (j == other_head_slice_id)) {
-            return disk.calc_slice_contribution(i, global::timestamp, 3) > disk.calc_slice_contribution(j, global::timestamp, 3);
+            return disk.calc_slice_contribution(i, global::timestamp, 3) >
+                   disk.calc_slice_contribution(j, global::timestamp, 3);
             // return disk.slice_margin_gain[i] > disk.slice_margin_gain[j];
         }
         return (i == other_head_slice_id) < (j == other_head_slice_id);
@@ -424,7 +428,7 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
         int target_slice = slice_id[1];
         if (target_slice != 0) {
             int target = disk.slice_start[target_slice];
-            while (disk.query_num[target] == 0) {
+            while (disk.request_num[target] == 0) {
                 target = mod(target, 1, global::V, 1);
             }
             strategy.add_action(HeadActionType::JUMP, target);
@@ -466,7 +470,7 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
         int slice_last_query_p = disk.slice_end[disk.slice_id[disk.head[head_id]]];
         for (int i = disk.slice_end[disk.slice_id[disk.head[head_id]]];
              i >= disk.slice_start[disk.slice_id[disk.head[head_id]]]; i--) {
-            if (disk.query_num[i] != 0) {
+            if (disk.request_num[i] != 0) {
                 slice_last_query_p = i;
                 break;
             }
@@ -483,7 +487,7 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
             for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]];
                  pos++) {
                 ObjectBlock& block = disk.blocks[pos];
-                if (block.object_id == 0 || disk.query_num[pos] == 0) continue;
+                if (block.object_id == 0 || disk.request_num[pos] == 0) continue;
                 Object& object = global::objects[block.object_id];
                 object.clean_gain();
                 for (int x = 0; x < 3; x++) {
@@ -497,7 +501,8 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
                         global::used_del_request[it.req_id] = true;
                         for (int x = 0; x < 3; x++) {
                             Disk& t_disk = global::disks[object.disk_id[x]];
-                            t_disk.decease_slice_gain(object.block_id[x][1], object.read_request_time[it.req_id], global::timestamp);
+                            t_disk.decease_slice_gain(object.block_id[x][1], object.read_request_time[it.req_id],
+                                                      global::timestamp);
                         }
                     }
                 }
@@ -510,7 +515,7 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
             int start = mod(disk.head[head_id], 1, global::V, strategy.actions.size());
             for (int pos = start; pos <= disk.slice_end[disk.slice_id[start]]; pos++) {
                 ObjectBlock& block = disk.blocks[pos];
-                if (block.object_id == 0 || disk.query_num[pos] == 0) continue;
+                if (block.object_id == 0 || disk.request_num[pos] == 0) continue;
                 Object& object = global::objects[block.object_id];
                 object.clean_gain();
                 for (int x = 0; x < 3; x++) {
@@ -525,7 +530,8 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
                         global::used_del_request[it.req_id] = true;
                         for (int x = 0; x < 3; x++) {
                             Disk& t_disk = global::disks[object.disk_id[x]];
-                            t_disk.decease_slice_gain(object.block_id[x][1], object.read_request_time[it.req_id], global::timestamp);
+                            t_disk.decease_slice_gain(object.block_id[x][1], object.read_request_time[it.req_id],
+                                                      global::timestamp);
                         }
                     }
                 }
@@ -552,14 +558,16 @@ inline std::vector<int> timeout_read_requests_function() {
                     if (request.readed[j] == false) {
                         disk.decease_query(object.block_id[i][j]);
                         if (request.uncleand_gain) {
-                            disk.decease_gain(object.block_id[i][j], global::timestamp - request.timestamp, request.timestamp);
+                            disk.decease_gain(object.block_id[i][j], global::timestamp - request.timestamp,
+                                              request.timestamp);
                         }
                     }
                 }
             }
             if (global::used_del_request[request.req_id] == false) {
                 global::used_del_request[request.req_id] = true;
-                for (int i = 0; i < 3; ++i) global::disks[i].decease_slice_gain(object.block_id[i][1], request.timestamp, global::timestamp);
+                for (int i = 0; i < 3; ++i)
+                    global::disks[i].decease_slice_gain(object.block_id[i][1], request.timestamp, global::timestamp);
             }
         }
     }

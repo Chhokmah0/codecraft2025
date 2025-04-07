@@ -32,18 +32,13 @@ inline void delete_object(int object_id) {
     Object& object = global::objects[object_id];
     for (int i = 0; i < 3; i++) {
         Disk& disk = global::disks[object.disk_id[i]];
-        for (int j = 1; j <= object.size; j++) {
-            disk.erase(object.block_id[i][j], global::timestamp);
-        }
+        disk.erase(object);
     }
 
     std::vector<int> temp_deleted_requests;
-    for (const auto& [req_id, request] : object.get_read_status()) {
+    for (const auto& [req_id, request] : object.read_requests) {
+        global::request_object_id.erase(req_id);
         temp_deleted_requests.push_back(req_id);
-        if (global::used_del_request[req_id] == false) {
-            global::used_del_request[req_id] = true;
-            for (int i = 0; i < 3; ++i) global::disks[i].decease_slice_gain(object.block_id[i][1], request.timestamp, global::timestamp);
-        }
     }
     deleted_requests.insert(deleted_requests.end(), temp_deleted_requests.begin(), temp_deleted_requests.end());
 
@@ -51,15 +46,11 @@ inline void delete_object(int object_id) {
 }
 
 inline void write_object(const ObjectWriteStrategy& strategy) {
+    global::objects[strategy.object.id] = Object(strategy);
     for (int i = 0; i < 3; i++) {
         Disk& disk = global::disks[strategy.disk_id[i]];
-        for (int j = 1; j <= strategy.object.size; j++) {
-            disk.write(strategy.block_id[i][j],
-                       ObjectBlock{strategy.object.id, strategy.object.size, strategy.object.tag, j});
-        }
+        disk.write(global::objects[strategy.object.id]);
     }
-
-    global::objects[strategy.object.id] = Object(strategy);
 }
 
 // 模拟单个磁头的动作
