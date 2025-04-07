@@ -23,14 +23,14 @@ constexpr auto generate_gain_mult() {
     return GAIN_MULT;
 }
 constexpr auto generate_simluate_mult() {
-    std::array<double, 120> GAIN_MULT = {};
-    for (size_t i = 0; i < GAIN_MULT.size(); ++i) {
-        GAIN_MULT[i] = i <= 10 ? 0.005 : 0.01;
+    std::array<double, 120> SIMLUATE_MULT = {};
+    for (size_t i = 0; i < SIMLUATE_MULT.size(); ++i) {
+        SIMLUATE_MULT[i] = i <= 10 ? 0.005 : 0.01;
     }
-    for (size_t i = 0; i < GAIN_MULT.size(); ++i) {
-        GAIN_MULT[i] *= (i == 0) ? 1 : GAIN_MULT[i - 1] - GAIN_MULT[i - 1];
+    for (size_t i = 0; i < SIMLUATE_MULT.size(); ++i) {
+        SIMLUATE_MULT[i] = (i == 0) ? 1 : SIMLUATE_MULT[i - 1] - SIMLUATE_MULT[i];
     }
-    return GAIN_MULT;
+    return SIMLUATE_MULT;
 }
 constexpr auto GAIN_MULT = generate_gain_mult();
 constexpr auto SIMLUATE_MULT = generate_simluate_mult();
@@ -57,7 +57,6 @@ struct ObjectWriteStrategy {
         return false;
     }
 };
-
 
 // 一个仍然存在的读取请求被分为两种状态
 // 1. 正常的读取请求，在 object 和 disk 的各处状态中都会体现。
@@ -115,7 +114,7 @@ class Object {
         unclean_gain_requests.insert(req_id);
     }
 
-    // 读取这个对象第 block_index 个块，返回所有被完成的读取请求的编号
+    // 读取这个对象第 block_index 个块，返回所有被完成的读取请求的编号，需要在外侧删除这些请求
     std::vector<int> read(int block_index) {
         std::vector<int> completed_requests;
         for (auto& [req_id, request] : read_requests) {
@@ -128,18 +127,12 @@ class Object {
                 completed_requests.push_back(req_id);
             }
         }
-        for (auto req_id : completed_requests) {
-            read_requests.erase(req_id);
-            if (unclean_gain_requests.count(req_id)) {
-                unclean_gain_requests.erase(req_id);
-            }
-        }
         return completed_requests;
     }
 
-    // 获取超时的请求
-    std::vector<ObjectReadStatus> get_timeout_requests(int timestamp, int rel_lim = 105) {
-        std::vector<ObjectReadStatus> timeout_requests;
+    // 获取超时的请求，需要在外侧删除这些请求
+    std::vector<int> get_timeout_requests(int timestamp, int rel_lim = 105) {
+        std::vector<int> timeout_requests;
         while (!read_queue.empty() && read_queue.front().timestamp + rel_lim <= timestamp) {
             int req_id = read_queue.front().req_id;
             read_queue.pop_front();
@@ -147,21 +140,22 @@ class Object {
             if (!read_requests.count(req_id)) {
                 continue;
             }
-
-            ObjectReadStatus request = std::move(read_requests[req_id]);
-            read_requests.erase(req_id);
-            if (unclean_gain_requests.count(req_id)) {
-                unclean_gain_requests.erase(req_id);
-            }
-            timeout_requests.push_back(request);
+            timeout_requests.push_back(req_id);
         }
         return timeout_requests;
     }
 
-    // TODO: 放弃某个请求
-    void give_up_request(int req_id) {
+    void clean_gain() {
+        unclean_gain_requests.clear();
+    }
+
+    // 放弃某个请求
+    void erase_request(int req_id) {
         assert(read_requests.count(req_id));
         read_requests.erase(req_id);
+        if (unclean_gain_requests.count(req_id)) {
+            unclean_gain_requests.erase(req_id);
+        }
     }
 };
 
@@ -219,8 +213,8 @@ struct HeadStrategy {
 // 而 gain 是以 slice 为粒度的
 class Disk {
    public:
-   // 该数据结构用于维护时间片，会被用来计算 gain
-   // 允许被删除的请求是不存在的
+    // 该数据结构用于维护时间片，会被用来计算 gain
+    // 允许被删除的请求是不存在的
     struct TimeStruct {
         int timestamp;                     // 时间片的编号
         std::unordered_set<int> requests;  // 这个时间片的请求
@@ -408,7 +402,7 @@ class Disk {
 
         // 释放查询
         for (const auto& [req_id, request] : object.read_requests) {
-            give_up_request(object, req_id);
+            erase_request(object, req_id);
         }
 
         // 释放块
@@ -431,15 +425,16 @@ class Disk {
         }
     }
 
-    void give_up_request(const Object& object, int req_id) {
+    void erase_request(const Object& object, int req_id) {
         assert(request_time.count(req_id));
         int copy_id = get_copy_id(object);
         int slice_id = object.slice_id[copy_id];
-        
+
         // 维护 block
         const ObjectReadStatus& request = object.read_requests.at(req_id);
         for (int i = 1; i <= object.size; i++) {
-            if (request.readed[i]) {
+            // 如果已经被读取 or object 中已经读取完毕这个请求
+            if (request.readed[i] || object.read_requests.count(req_id) == 0) {
                 continue;
             }
             int index = object.block_id[copy_id][i];
@@ -448,7 +443,7 @@ class Disk {
             slice_request_num[slice_id]--;
             total_request_num--;
         }
-        
+
         // 维护 gain
         int timestamp = request_time[req_id];
         request_time.erase(req_id);
@@ -478,10 +473,13 @@ class Disk {
     // read 指定的 block
     void read(int block_index) {
         // 允许读取空块
-        if(blocks[block_index].object_id == 0) {
+        if (blocks[block_index].object_id == 0) {
             return;
         }
-        //TODO
+        // 清空这个位置的 request，Object 中会被标记为已经 read，因此不会二次读取
+        total_request_num -= request_num[block_index];
+        slice_request_num[slice_id[block_index]] -= request_num[block_index];
+        request_num[block_index] = 0;
     }
 
     double get_slice_gain(int slice_id) {
@@ -498,7 +496,7 @@ class Disk {
     void clean_object_gain(Object& object) {
         int copy_id = get_copy_id(object);
         int slice_id = object.slice_id[copy_id];
-        for(auto req_id : object.unclean_gain_requests) {
+        for (auto req_id : object.unclean_gain_requests) {
             if (request_time.count(req_id)) {
                 int timestamp = request_time[req_id];
                 int passed_time = cur_time - timestamp;
@@ -509,7 +507,6 @@ class Disk {
                 time_struct.remove_request(object, req_id);
             }
         }
-        object.unclean_gain_requests.clear();
     }
 
     // 模拟到下一个时间片，返回超出 predict_time 的请求
@@ -517,13 +514,13 @@ class Disk {
     std::vector<int> next_time() {
         cur_time++;
         std::vector<int> timeout_requests;
-        for(int i = 1; i <= slice_num; i++) {
+        for (int i = 1; i <= slice_num; i++) {
             auto& time_requests = slice_time_requests[i];
             time_requests.push_front(TimeStruct{cur_time, {}, 0, 0});
             // XXX：检查这里的时间
             if (time_requests.size() > predict_time + 1) {
                 timeout_requests.insert(timeout_requests.end(), time_requests.back().requests.begin(),
-                                   time_requests.back().requests.end());
+                                        time_requests.back().requests.end());
                 time_requests.pop_back();
             }
         }

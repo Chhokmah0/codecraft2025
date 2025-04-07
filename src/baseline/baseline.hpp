@@ -199,25 +199,6 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             }
             // 按照某些优先级给 slice 排序
             auto slice_key = [&](const std::pair<int, int>& disk_slice) {
-                const Disk& disk = global::disks[disk_slice.first];
-                int slice_id = disk_slice.second;
-
-                bool has_tag = (disk.slice_tag[slice_id] & (1 << object.tag)) == (1 << object.tag);
-                int l_slice_id = mod(slice_id, 1, disk.slice_num, -1);
-                int r_slice_id = mod(slice_id, 1, disk.slice_num, 1);
-                bool neighbor_has_tag = (disk.slice_tag[l_slice_id] & (1 << object.tag)) == (1 << object.tag) ||
-                                        (disk.slice_tag[r_slice_id] & (1 << object.tag)) == (1 << object.tag);
-
-                int tag_num = __builtin_popcount(disk.slice_tag[slice_id]);
-                int empty_block_num = disk.slice_empty_block_num[slice_id];
-                int empty_slice_num = 0;
-                for (int i = 1; i <= disk.slice_num; i++) {
-                    if (disk.slice_tag[i] == 0) {
-                        empty_slice_num++;
-                    }
-                }
-                bool is_tag_id = slice_id == object.tag;
-
                 struct SliceValue {
                     bool has_tag;
                     int tag_num;
@@ -250,6 +231,25 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                         return false;
                     }
                 };
+
+                const Disk& disk = global::disks[disk_slice.first];
+                int slice_id = disk_slice.second;
+
+                bool has_tag = (disk.slice_tag[slice_id] & (1 << object.tag)) == (1 << object.tag);
+                int l_slice_id = mod(slice_id, 1, disk.slice_num, -1);
+                int r_slice_id = mod(slice_id, 1, disk.slice_num, 1);
+                bool neighbor_has_tag = (disk.slice_tag[l_slice_id] & (1 << object.tag)) == (1 << object.tag) ||
+                                        (disk.slice_tag[r_slice_id] & (1 << object.tag)) == (1 << object.tag);
+
+                int tag_num = __builtin_popcount(disk.slice_tag[slice_id]);
+                int empty_block_num = disk.slice_empty_block_num[slice_id];
+                int empty_slice_num = 0;
+                for (int i = 1; i <= disk.slice_num; i++) {
+                    if (disk.slice_tag[i] == 0) {
+                        empty_slice_num++;
+                    }
+                }
+                bool is_tag_id = slice_id == object.tag;
                 return SliceValue{has_tag, tag_num, empty_block_num, empty_slice_num, neighbor_has_tag, is_tag_id};
             };
             // TODO：如果不 shuffle 的话，不同 tag 的物品会被按顺序放到硬盘上，使得 neighbor_has_tag 的 slice
@@ -267,6 +267,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
 
             // 选好了硬盘和 slice，开始放置
             strategy.disk_id[i] = target_disk_id;
+            strategy.slice_id[i] = target_slice_id;
             if (__builtin_popcount(global::disks[target_disk_id].slice_tag[target_slice_id]) % 2 == 1) {
                 strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
             } else {
@@ -405,20 +406,21 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
 
     // 如果策略中没有有效的 READ，贪心 JUMP 到下一个收益最大的 slice 的可读取开头
     // 但是如果当前位置正好是前两个收益最大的 slice 块，则无需跳转
+    std::vector<double> slice_gain(disk.slice_num + 1);
+    for (int i = 1; i <= disk.slice_num; i++) {
+        slice_gain[i] = disk.get_slice_gain(i);
+    }
     std::vector<int> slice_id(disk.slice_num + 1);
     std::iota(slice_id.begin(), slice_id.end(), 0);
     std::partial_sort(slice_id.begin() + 1, slice_id.begin() + 3, slice_id.end(), [&](int i, int j) {
         int other_head_slice_id = disk.slice_id[disk.head[head_id ^ 1]];
-        if ((i == other_head_slice_id) == (j == other_head_slice_id)) {
-            return disk.calc_slice_contribution(i, global::timestamp, 3) >
-                   disk.calc_slice_contribution(j, global::timestamp, 3);
-            // return disk.slice_margin_gain[i] > disk.slice_margin_gain[j];
+        if ((i == other_head_slice_id) != (j == other_head_slice_id)) {
+            return (i == other_head_slice_id) < (j == other_head_slice_id);
         }
-        return (i == other_head_slice_id) < (j == other_head_slice_id);
+        return slice_gain[i] > slice_gain[j];
     });
     // 这里的 slice_id[1] 和 slice_id[2] 是收益最大的两个 slice
-    int len = strategy.actions.size(), nxt_pos = mod(disk.head[head_id], 1, global::V, 0);
-    if (disk.slice_id[nxt_pos] == slice_id[1] || disk.slice_id[nxt_pos] == slice_id[2]) {
+    if (disk.slice_id[p] == slice_id[1] || disk.slice_id[p] == slice_id[2]) {
         should_jmp[disk_id][head_id] = false;
     }
 
@@ -430,6 +432,10 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
             int target = disk.slice_start[target_slice];
             while (disk.request_num[target] == 0) {
                 target = mod(target, 1, global::V, 1);
+                // target = mod(target, disk.slice_start[target_slice], disk.slice_end[target_slice], 1);
+                // if (target == disk.slice_start[target_slice]) {
+                //     break;
+                // }
             }
             strategy.add_action(HeadActionType::JUMP, target);
         }
@@ -480,63 +486,40 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
         } else if ((int)strategy.actions.size() + disk.head[head_id] > slice_last_query_p) {
             should_jmp[disk_id][head_id] = true;
         }
-        // 模拟磁头动作
-        simulate_head(disk, head_id, strategy);
-        // 如果是跳转的话，将该块对应的其他块的信息清空
-        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
-            for (int pos = strategy.actions[0].target; pos != disk.slice_end[disk.slice_id[strategy.actions[0].target]];
-                 pos++) {
-                ObjectBlock& block = disk.blocks[pos];
-                if (block.object_id == 0 || disk.request_num[pos] == 0) continue;
-                Object& object = global::objects[block.object_id];
-                object.clean_gain();
-                for (int x = 0; x < 3; x++) {
-                    Disk& diskt = global::disks[object.disk_id[x]];
-                    for (int j = 1; j <= object.size; j++) {
-                        diskt.clean_gain(object.block_id[x][j], global::timestamp);
-                    }
-                }
-                for (auto& it : object.read_queue) {
-                    if (global::used_del_request[it.req_id] == false) {
-                        global::used_del_request[it.req_id] = true;
-                        for (int x = 0; x < 3; x++) {
-                            Disk& t_disk = global::disks[object.disk_id[x]];
-                            t_disk.decease_slice_gain(object.block_id[x][1], object.read_request_time[it.req_id],
-                                                      global::timestamp);
-                        }
-                    }
-                }
+        // 没有走出当前块或跳转时，将该块对应的其他块的信息清空
+        bool should_clean =
+        (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) ||
+        (disk.head[head_id] + (int)strategy.actions.size() <= disk.slice_end[disk.slice_id[disk.head[head_id]]]);
+        
+        if (should_clean) {
+            int after_head = disk.head[head_id] + strategy.actions.size();
+            if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
+                after_head = strategy.actions[0].target;
             }
-            assert(std::abs(disk.slice_margin_gain[disk.slice_id[strategy.actions[0].target]]) <= 1e-10);
-        } else if (!strategy.actions.empty() && (int)strategy.actions.size() + disk.head[head_id] <=
-                                                    disk.slice_end[disk.slice_id[disk.head[head_id]]]) {
-            // std::cerr << disk.head[head_id] << " " << disk_id << " " << head_id << " " <<
-            // disk.slice_end[disk.slice_id[disk.head[head_id]]] << '\n';
-            int start = mod(disk.head[head_id], 1, global::V, strategy.actions.size());
-            for (int pos = start; pos <= disk.slice_end[disk.slice_id[start]]; pos++) {
+            for (int pos = after_head; pos <= disk.slice_end[disk.slice_id[after_head]]; pos++) {
                 ObjectBlock& block = disk.blocks[pos];
                 if (block.object_id == 0 || disk.request_num[pos] == 0) continue;
                 Object& object = global::objects[block.object_id];
+                // 如果该 object 在这个硬盘上的所有 block 都在 after_head 往后，清除（包揽）这个物品的查询贡献
+                bool should_clean_object = true;
+                int copy_id = disk.get_copy_id(object);
+                for (int i = 1; i <= object.size; i++) {
+                    if (object.block_id[copy_id][i] < after_head) {
+                        should_clean_object = false;
+                        break;
+                    }
+                }
+                if (!should_clean_object) continue;
+                // 清理 gain
+                for (int i = 0; i < 3; i++) {
+                    Disk& disk = global::disks[object.disk_id[i]];
+                    disk.clean_object_gain(object);
+                }
                 object.clean_gain();
-                for (int x = 0; x < 3; x++) {
-                    if (object.disk_id[x] == disk_id) continue;
-                    Disk& diskt = global::disks[object.disk_id[x]];
-                    for (int j = 1; j <= object.size; j++) {
-                        diskt.clean_gain(object.block_id[x][j], global::timestamp);
-                    }
-                }
-                for (auto& it : object.read_queue) {
-                    if (global::used_del_request[it.req_id] == false) {
-                        global::used_del_request[it.req_id] = true;
-                        for (int x = 0; x < 3; x++) {
-                            Disk& t_disk = global::disks[object.disk_id[x]];
-                            t_disk.decease_slice_gain(object.block_id[x][1], object.read_request_time[it.req_id],
-                                                      global::timestamp);
-                        }
-                    }
-                }
             }
         }
+        // 模拟磁头动作
+        simulate_head(disk, head_id, strategy);
     }
     return head_strategies;
 }
@@ -547,28 +530,16 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
 inline std::vector<int> timeout_read_requests_function() {
     std::vector<int> timeout_read_requests;
     for (auto& [obj_id, object] : global::objects) {
-        // 获取时就维护了 object 的状态
         auto temp_timeout_read_requests = object.get_timeout_requests(global::timestamp, 105);
-        for (const auto& request : temp_timeout_read_requests) {
-            timeout_read_requests.push_back(request.req_id);
+        for (auto req_id : temp_timeout_read_requests) {
+            timeout_read_requests.push_back(req_id);
             // 维护磁盘的状态
             for (int i = 0; i < 3; i++) {
                 Disk& disk = global::disks[object.disk_id[i]];
-                for (int j = 1; j <= object.size; j++) {
-                    if (request.readed[j] == false) {
-                        disk.decease_query(object.block_id[i][j]);
-                        if (request.uncleand_gain) {
-                            disk.decease_gain(object.block_id[i][j], global::timestamp - request.timestamp,
-                                              request.timestamp);
-                        }
-                    }
-                }
+                disk.erase_request(object, req_id);
             }
-            if (global::used_del_request[request.req_id] == false) {
-                global::used_del_request[request.req_id] = true;
-                for (int i = 0; i < 3; ++i)
-                    global::disks[i].decease_slice_gain(object.block_id[i][1], request.timestamp, global::timestamp);
-            }
+            object.erase_request(req_id);
+            global::request_object_id.erase(req_id);
         }
     }
     return timeout_read_requests;
@@ -611,11 +582,9 @@ inline void run() {
             object.add_request(req_id, global::timestamp);
             for (int i = 0; i < 3; i++) {
                 Disk& disk = global::disks[object.disk_id[i]];
-                for (int j = 1; j <= object.size; j++) {
-                    disk.query(object.block_id[i][j], global::timestamp);
-                }
-                disk.query_slice(object.block_id[i][1], global::timestamp);
+                disk.query(object, req_id);
             }
+            global::request_object_id[req_id] = object_id;
         }
 
         // NOTE: 模拟磁盘头动作的任务交给 head_strategy_function
@@ -628,13 +597,9 @@ inline void run() {
         busy_request_num += (int)timeout_read_requests.size();
         io::busy_requests_output(timeout_read_requests);
         // 一轮结束，更新磁盘的状态
-        /*for (int i = 1; i <= global::N; ++i) {
-            for (int j = 1; j <= global::V; ++j) {
-                if (global::disks[i].blocks[j].object_id != 0) {
-                    global::disks[i].update(j);
-                }
-            }
-        }*/
+        for (int i = 1; i <= global::N; ++i) {
+            auto timeout_requests = global::disks[i].next_time();
+        }
 
         // 垃圾回收
         // TODO: 临时方案
@@ -644,11 +609,6 @@ inline void run() {
             std::cerr << global::timestamp << " total busy:" << busy_request_num << ",total done: " << done_request_num
                       << '\n';
             std::cerr.flush();
-        }
-    }
-    for (int i = 1; i <= global::N; i++) {
-        for (int j = 1; j <= global::disks[i].slice_num; j++) {
-            global::disks[i].time_slice_margin_gain[j][(global::timestamp) % global::disks[i].predict_time] = 0;
         }
     }
     std::cerr << "final total busy:" << " " << busy_request_num << ",total done: " << done_request_num << '\n';

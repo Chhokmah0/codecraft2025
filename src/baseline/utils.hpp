@@ -64,8 +64,9 @@ inline void simulate_head(Disk& disk, int head_id, const HeadStrategy& strategy)
                 break;
             }
             case HeadActionType::READ: {
-                auto cost =
-                    disk.pre_action[head_id] != HeadActionType::READ ? 64 : std::max(16, (disk.pre_action_cost[head_id] * 4 + 4) / 5);
+                auto cost = disk.pre_action[head_id] != HeadActionType::READ
+                                ? 64
+                                : std::max(16, (disk.pre_action_cost[head_id] * 4 + 4) / 5);
                 disk.pre_action[head_id] = HeadActionType::READ;
                 disk.pre_action_cost[head_id] = cost;
 
@@ -82,24 +83,22 @@ inline void simulate_head(Disk& disk, int head_id, const HeadStrategy& strategy)
                                           temp_completed_requests.end());
                 for (int i = 0; i < 3; i++) {
                     Disk& t_disk = global::disks[object.disk_id[i]];
-                    t_disk.read(object.block_id[i][block.object_block_index], global::timestamp);
+                    t_disk.read(object.block_id[i][block.object_block_index]);
                 }
                 for (int request_id : temp_completed_requests) {
-                    if (global::used_del_request.count(request_id) == 0) {
-                        global::used_del_request[request_id] = true;
-                        for (int i = 0; i < 3; i++) {
-                            Disk& t_disk = global::disks[object.disk_id[i]];
-                            t_disk.decease_slice_gain(object.block_id[i][1], object.read_request_time[request_id], global::timestamp);
-                        }
+                    for (int i = 0; i < 3; i++) {
+                        Disk& t_disk = global::disks[object.disk_id[i]];
+                        t_disk.erase_request(object, request_id);
                     }
+                    object.erase_request(request_id);
                 }
-                disk.head[head_id] = disk.head[head_id] % global::V + 1;
+                disk.head[head_id] = mod(disk.head[head_id], 1, global::V, 1);
                 break;
             }
             case HeadActionType::PASS: {
                 disk.pre_action[head_id] = HeadActionType::PASS;
                 disk.pre_action_cost[head_id] = 1;
-                disk.head[head_id] = disk.head[head_id] % global::V + 1;
+                disk.head[head_id] = mod(disk.head[head_id], 1, global::V, 1);
                 break;
             }
         }
