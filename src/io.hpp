@@ -133,12 +133,12 @@ inline void garbage_collection_output(const std::vector<std::vector<std::pair<in
     std::cout << "GARBAGE COLLECTION" << '\n';
     for (int i = 1; i <= global::N; i++) {
         std::cout << used_swap[i].size() << '\n';
-        std::cerr << global::timestamp << " disk " << i << " " << used_swap[i].size() << '\n';
+        // std::cerr << global::timestamp << " disk " << i << " " << used_swap[i].size() << '\n';
         for (auto [start_part, end_part] : used_swap[i]) {
             std::cout << start_part << " " << end_part << '\n';
         }
     }
-    std::cerr.flush();
+    // std::cerr.flush();
     std::cout.flush();
 }
 

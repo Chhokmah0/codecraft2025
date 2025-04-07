@@ -270,7 +270,8 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             strategy.slice_id[i] = target_slice_id;
             if (__builtin_popcount(global::disks[target_disk_id].slice_tag[target_slice_id]) % 2 == 1) {
                 int local_tag = 0;  // 找到该块的主色调
-                for (int i = global::disks[target_disk_id].slice_start[target_slice_id]; i <= global::disks[target_disk_id].slice_end[target_slice_id]; i++) {
+                for (int i = global::disks[target_disk_id].slice_start[target_slice_id];
+                     i <= global::disks[target_disk_id].slice_end[target_slice_id]; i++) {
                     if (global::disks[target_disk_id].blocks[i].object_tag != 0) {
                         local_tag = global::disks[target_disk_id].blocks[i].object_tag;
                         break;
@@ -282,7 +283,8 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                     strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
             } else {
                 int local_tag = 0;  // 找到该块的主色调
-                for (int i = global::disks[target_disk_id].slice_start[target_slice_id]; i <= global::disks[target_disk_id].slice_end[target_slice_id]; i++) {
+                for (int i = global::disks[target_disk_id].slice_start[target_slice_id];
+                     i <= global::disks[target_disk_id].slice_end[target_slice_id]; i++) {
                     if (global::disks[target_disk_id].blocks[i].object_tag != 0) {
                         local_tag = global::disks[target_disk_id].blocks[i].object_tag;
                         break;
@@ -449,7 +451,8 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
         // 跳转到收益最大的 slice 的可读取开头
         int target_slice = 0;
         for (int i = 1; i <= disk.slice_num; ++i) {
-            if (slice_id[i] == disk.slice_id[disk.head[head_id ^ 1]] && slice_id[i] == disk.slice_id[disk.head[head_id]]) {
+            if (slice_id[i] == disk.slice_id[disk.head[head_id ^ 1]] &&
+                slice_id[i] == disk.slice_id[disk.head[head_id]]) {
                 continue;
             }
             if (target_slice == 0) {
@@ -498,7 +501,7 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
               [&simulate_read_time](int i, int j) { return simulate_read_time[i] > simulate_read_time[j]; });
     // std::shuffle(index.begin() + 1, index.end(), global::rng);
     for (int i = 1; i <= 2 * global::N; i++) {
-        std::cerr << i << "\n";
+        // std::cerr << i << "\n";
         int disk_id = index[i] > global::N ? index[i] - global::N : index[i];
         int head_id = index[i] > global::N ? 1 : 0;
         Disk& disk = global::disks[disk_id];
@@ -577,10 +580,11 @@ inline std::vector<int> timeout_read_requests_function() {
     }
     return timeout_read_requests;
 }
+
 inline std::vector<std::vector<std::pair<int, int>>> garbage_collection_function() {
     std::vector<std::vector<std::pair<int, int>>> garbage_collection_strategies(global::N + 1);
     for (int i = 1; i <= global::N; i++) {
-        std::cerr << i << "\n";
+        // std::cerr << i << "\n";
         Disk& disk = global::disks[i];
         std::vector<std::pair<int, int>> cand;
         for (int j = 1; j <= disk.slice_num; j++) {
@@ -601,7 +605,9 @@ inline std::vector<std::vector<std::pair<int, int>>> garbage_collection_function
                 continue;
             }
             for (int k = data.back(); k >= disk.slice_start[j]; --k) {
-                if (disk.blocks[k].object_id == 0) bubble.push_back(k);
+                if (disk.blocks[k].object_id == 0) {
+                    bubble.push_back(k);
+                }
             }
             std::reverse(bubble.begin(), bubble.end());
             std::reverse(data.begin(), data.end());
@@ -610,25 +616,11 @@ inline std::vector<std::vector<std::pair<int, int>>> garbage_collection_function
                 cand.push_back({bubble[k], data[k]});
             }
         }
-        std::sort(cand.begin(), cand.end(), [&](const auto& a, const auto& b) {
-            return a.second - a.first > b.second - b.first;
-        });
+        std::sort(cand.begin(), cand.end(),
+                  [&](const auto& a, const auto& b) { return a.second - a.first > b.second - b.first; });
         for (int j = 0; j < std::min(global::K, (int)cand.size()); ++j) {
             garbage_collection_strategies[i].push_back(cand[j]);
-            auto [x, y] = cand[j];
-            ObjectBlock& block1 = disk.blocks[y];
-            Object& object1 = global::objects[block1.object_id];
-            disk.empty_ranges.erase(y);
-            disk.empty_ranges.write(x);
-            std::swap(disk.request_num[x], disk.request_num[y]);
-            for (int ob = 0; ob < 3; ++ob) {
-                for (int pos = 1; pos <= object1.size; pos++) {
-                    if (object1.block_id[ob][pos] == y) {
-                        object1.block_id[ob][pos] = x;
-                    }
-                }
-            }
-            std::swap(disk.blocks[x], disk.blocks[y]);
+            swap_block(disk, cand[j].first, cand[j].second);
         }
     }
     return garbage_collection_strategies;
@@ -642,7 +634,7 @@ inline void run() {
     int busy_request_num = 0, done_request_num = 0;  // 一个统计有多少查询被busy,完成了多少的变量。
     for (global::timestamp = 1; global::timestamp <= global::T + 105; global::timestamp++) {
         // debug
-        std::cerr << "timestamp: " << global::timestamp << '\n';
+        // std::cerr << "timestamp: " << global::timestamp << '\n';
         // for (int i = 1; i <= global::N; ++i) {
         //     global::disks[i].debug_check();
         // }
@@ -656,11 +648,13 @@ inline void run() {
             delete_object(object_id);
         }
         io::delete_object_output(deleted_requests);
+
         // 对象写入事件
         auto write_objects = io::write_object_input();
         // NOTE: 模拟写入的任务交给 write_strategy_function
         auto write_strategies = write_strategy_function(write_objects);
         io::write_object_output(write_strategies);
+
         // 对象读取事件
         auto read_objects = io::read_object_input();
         for (const auto& [req_id, object_id] : read_objects) {

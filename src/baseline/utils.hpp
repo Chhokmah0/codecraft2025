@@ -25,6 +25,37 @@ inline int move_head(int disk_id, int slice_id, int p, int step) {
 inline std::vector<int> deleted_requests;
 inline std::vector<int> completed_requests;
 
+inline void swap_block(Disk& disk, int block_id1, int block_id2) {
+    // 维护 object 的状态
+    if (disk.blocks[block_id1].object_id != 0) {
+        Object& object = global::objects[disk.blocks[block_id1].object_id];
+        int copy_id = disk.get_copy_id(object);
+        object.block_id[copy_id][disk.blocks[block_id1].object_block_index] = block_id2;
+    }
+    if (disk.blocks[block_id2].object_id != 0) {
+        Object& object = global::objects[disk.blocks[block_id2].object_id];
+        int copy_id = disk.get_copy_id(object);
+        object.block_id[copy_id][disk.blocks[block_id2].object_block_index] = block_id1;
+    }
+
+    // 维护 disk 的状态
+    std::swap(disk.blocks[block_id1], disk.blocks[block_id2]);
+    std::swap(disk.request_time[block_id1], disk.request_time[block_id2]);
+    if ((disk.blocks[block_id1].object_id == 0) != (disk.blocks[block_id2].object_id == 0)) {
+        // 交换了一个空块和一个非空块
+        if (disk.blocks[block_id1].object_id != 0) {
+            disk.empty_ranges.erase(block_id1);
+            disk.empty_ranges.write(block_id2);
+        } else {
+            disk.empty_ranges.erase(block_id2);
+            disk.empty_ranges.write(block_id1);
+        }
+    }
+}
+inline void swap_block(int disk_id, int block_id1, int block_id2) {
+    swap_block(global::disks[disk_id], block_id1, block_id2);
+}
+
 inline void delete_object(int object_id) {
     assert(global::objects.count(object_id));
 
