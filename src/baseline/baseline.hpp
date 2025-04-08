@@ -39,7 +39,7 @@ inline void init_local() {
 
     // 三三分组
     std::vector<std::pair<int, int>> temp_disk_slice;
-    for (int j = 1; j < global::disks[0].slice_num; j++) {
+    for (int j = 1; j <= global::disks[0].slice_num; j++) {
         for (int i = 1; i <= global::N; i++) {
             temp_disk_slice.push_back({i, j});
         }
@@ -50,7 +50,7 @@ inline void init_local() {
         tot_group++;
     }
     // 最后一个 slice 的长度和前面不一样，需要单独处理
-    temp_disk_slice.clear();
+    /*temp_disk_slice.clear();
     for (int i = 1; i <= global::N; i++) {
         temp_disk_slice.push_back({i, global::disks[i].slice_num});
     }
@@ -59,7 +59,7 @@ inline void init_local() {
         if (i + 2 >= temp_disk_slice.size()) break;
         group_disk_slice.push_back({temp_disk_slice[i], temp_disk_slice[i + 1], temp_disk_slice[i + 2]});
         tot_group++;
-    }
+    }*/
 
     should_jmp.resize(global::N + 1);
 
@@ -528,10 +528,10 @@ inline std::vector<int> timeout_read_requests_function() {
             Disk& disk = global::disks[object.disk_id[i]];
             int disk_used_time = 0x3f3f3f3f;
             if (disk.slice_id[disk.head[0]] == disk.slice_id[object.block_id[i][1]]) {
-                // disk_used_time = (*std::max_element(object.block_id[i].begin(), object.block_id[i].end()) - disk.slice_start[disk.slice_id[disk.head[0]]] + finish_G[object.size] - 1) / global::G;
+                disk_used_time = (*std::max_element(object.block_id[i].begin(), object.block_id[i].end()) - disk.head[0] + finish_G[object.size] - 1) / global::G;
                 disk_used_time = 0;
             } else if (disk.slice_id[disk.head[1]] == disk.slice_id[object.block_id[i][1]]) {
-                // disk_used_time = (*std::max_element(object.block_id[i].begin(), object.block_id[i].end()) - disk.slice_start[disk.slice_id[disk.head[1]]] + finish_G[object.size] - 1) / global::G;
+                disk_used_time = (*std::max_element(object.block_id[i].begin(), object.block_id[i].end()) - disk.head[1] + finish_G[object.size] - 1) / global::G;
                 disk_used_time = 0;
             } else {
                 disk_used_time = 1 + (finish_G[object.size] + global::G - 1 + *std::max_element(object.block_id[i].begin(), object.block_id[i].end()) -
