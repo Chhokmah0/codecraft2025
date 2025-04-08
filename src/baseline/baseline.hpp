@@ -518,7 +518,9 @@ inline std::vector<int> timeout_read_requests_function() {
             } else if (disk.slice_id[disk.head[1]] == disk.slice_id[object.block_id[i][1]]) {
                 disk_used_time = 0;
             } else {
-                disk_used_time = 1 + (object.size * 16 + global::G - 1 + object.block_id[i][object.size] - disk.slice_start[disk.slice_id[object.block_id[i][1]]]) / global::G;
+                disk_used_time = 1 + (object.size * 16 + global::G - 1 + object.block_id[i][object.size] -
+                                      disk.slice_start[disk.slice_id[object.block_id[i][1]]]) /
+                                         global::G;
             }
             used_time = std::min(used_time, disk_used_time);
         }
@@ -526,13 +528,7 @@ inline std::vector<int> timeout_read_requests_function() {
         auto temp_timeout_read_requests = object.get_timeout_requests(global::timestamp, predict_time);
         for (auto req_id : temp_timeout_read_requests) {
             timeout_read_requests.push_back(req_id);
-            // 维护磁盘的状态
-            for (int i = 0; i < 3; i++) {
-                Disk& disk = global::disks[object.disk_id[i]];
-                disk.erase_request(object, req_id);
-            }
-            object.erase_request(req_id);
-            global::request_object_id.erase(req_id);
+            give_up_request(req_id);
         }
     }
     return timeout_read_requests;
@@ -573,15 +569,17 @@ inline std::vector<std::vector<std::pair<int, int>>> garbage_collection_function
                 cand.push_back({bubble[k], data[k]});
             }
         }
-        std::sort(cand.begin(), cand.end(),
-                  [&](const auto& a, const auto& b) {
-                      double gain_a = disk.get_slice_gain(disk.slice_id[a.first]);
-                      double gain_b = disk.get_slice_gain(disk.slice_id[b.first]);
-                      if (a.second - a.first != b.second - b.first) return a.second - a.first > b.second - b.first;
-                      if (gain_a != gain_b) {
-                          return gain_a > gain_b;
-                      }
-                  });
+        std::sort(cand.begin(), cand.end(), [&](const std::pair<int, int>& a, const std::pair<int, int>& b) {
+            double gain_a = disk.get_slice_gain(disk.slice_id[a.first]);
+            double gain_b = disk.get_slice_gain(disk.slice_id[b.first]);
+            if (a.second - a.first != b.second - b.first) {
+                return a.second - a.first > b.second - b.first;
+            }
+            if (gain_a != gain_b) {
+                return gain_a > gain_b;
+            }
+            return false;
+        });
         for (int j = 0; j < std::min(global::K, (int)cand.size()); ++j) {
             garbage_collection_strategies[i].push_back(cand[j]);
             swap_block(disk, cand[j].first, cand[j].second);
