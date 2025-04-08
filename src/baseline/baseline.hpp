@@ -227,6 +227,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         auto group_key = [&](const int& group_id) {
             struct GroupValue {
                 bool has_tag;
+                bool is_empty;
                 int tag_num;
                 int empty_block_num;
                 int empty_slice_num;
@@ -235,6 +236,10 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                     // 优先拥有 tag
                     if (has_tag != other.has_tag) {
                         return has_tag > other.has_tag;
+                    }
+                    // 优先选择空闲 slice
+                    if (is_empty != other.is_empty) {
+                        return is_empty > other.is_empty;
                     }
                     // 优先选择 tag 数量少的 slice
                     if (tag_num != other.tag_num) {
@@ -258,6 +263,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
             bool has_tag = (disk.slice_tag[slice_id] & (1 << object.tag)) == (1 << object.tag);
             int tag_num = __builtin_popcount(disk.slice_tag[slice_id]);
             int empty_block_num = disk.slice_empty_block_num[slice_id];
+            bool is_empty = (empty_block_num == disk.slice_end[slice_id] - disk.slice_start[slice_id] + 1);
 
             // 由于三三分组，这里选择三个 slice 所在 disk 中拥有最少 slice 数的硬盘作为参考
             int min_empty_slice_num = global::disks[disk_id].slice_num;
@@ -273,7 +279,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                 min_empty_slice_num = std::min(min_empty_slice_num, empty_slice_num);
             }
 
-            return GroupValue{has_tag, tag_num, empty_block_num, min_empty_slice_num};
+            return GroupValue{has_tag, is_empty, tag_num, empty_block_num, min_empty_slice_num};
         };
         auto slice_cmp = [&](const int& group_id1, const int& group_id2) {
             return group_key(group_id1) < group_key(group_id2);
@@ -507,6 +513,14 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
 // 放弃读取请求，需要维护 disk 和 object 的状态
 inline std::vector<int> timeout_read_requests_function() {
     std::vector<int> timeout_read_requests;
+    std::vector<int> finish_G(6);
+    //{1, 64, 52, 42, 34, 28, 23, 19, 16};
+    finish_G[0] = 0;
+    finish_G[1] = 28;
+    finish_G[2] = 28 + finish_G[1];
+    finish_G[3] = 28 + finish_G[2];
+    finish_G[4] = 28 + finish_G[3];
+    finish_G[5] = 28 + finish_G[4];
     for (auto& [obj_id, object] : global::objects) {
         int predict_time = 105;      // 需要被丢掉的预测时间
         int used_time = 0x3f3f3f3f;  // 读取该物品所需要的最小时间
@@ -514,11 +528,13 @@ inline std::vector<int> timeout_read_requests_function() {
             Disk& disk = global::disks[object.disk_id[i]];
             int disk_used_time = 0x3f3f3f3f;
             if (disk.slice_id[disk.head[0]] == disk.slice_id[object.block_id[i][1]]) {
+                // disk_used_time = (*std::max_element(object.block_id[i].begin(), object.block_id[i].end()) - disk.slice_start[disk.slice_id[disk.head[0]]] + finish_G[object.size] - 1) / global::G;
                 disk_used_time = 0;
             } else if (disk.slice_id[disk.head[1]] == disk.slice_id[object.block_id[i][1]]) {
+                // disk_used_time = (*std::max_element(object.block_id[i].begin(), object.block_id[i].end()) - disk.slice_start[disk.slice_id[disk.head[1]]] + finish_G[object.size] - 1) / global::G;
                 disk_used_time = 0;
             } else {
-                disk_used_time = 1 + (object.size * 16 + global::G - 1 + object.block_id[i][object.size] -
+                disk_used_time = 1 + (finish_G[object.size] + global::G - 1 + *std::max_element(object.block_id[i].begin(), object.block_id[i].end()) -
                                       disk.slice_start[disk.slice_id[object.block_id[i][1]]]) /
                                          global::G;
             }
@@ -572,13 +588,15 @@ inline std::vector<std::vector<std::pair<int, int>>> garbage_collection_function
         std::sort(cand.begin(), cand.end(), [&](const std::pair<int, int>& a, const std::pair<int, int>& b) {
             double gain_a = disk.get_slice_gain(disk.slice_id[a.first]);
             double gain_b = disk.get_slice_gain(disk.slice_id[b.first]);
-            if (a.second - a.first != b.second - b.first) {
+
+            /*if (a.second - a.first != b.second - b.first) {
                 return a.second - a.first > b.second - b.first;
             }
-            if (gain_a != gain_b) {
-                return gain_a > gain_b;
+            return gain_a > gain_b;*/
+            if (gain_a == gain_b) {
+                return a.first < b.first;
             }
-            return false;
+            return gain_a > gain_b;
         });
         for (int j = 0; j < std::min(global::K, (int)cand.size()); ++j) {
             garbage_collection_strategies[i].push_back(cand[j]);
