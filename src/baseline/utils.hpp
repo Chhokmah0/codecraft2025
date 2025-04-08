@@ -79,7 +79,7 @@ inline void swap_block(Disk& disk, int block_id1, int block_id2) {
 
     // 维护 disk 的状态
     std::swap(disk.blocks[block_id1], disk.blocks[block_id2]);
-    std::swap(disk.request_time[block_id1], disk.request_time[block_id2]);
+    std::swap(disk.request_num[block_id1], disk.request_num[block_id2]);
     if ((disk.blocks[block_id1].object_id == 0) != (disk.blocks[block_id2].object_id == 0)) {
         // 交换了一个空块和一个非空块
         if (disk.blocks[block_id1].object_id != 0) {

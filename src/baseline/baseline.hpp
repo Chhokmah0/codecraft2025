@@ -508,7 +508,22 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
 inline std::vector<int> timeout_read_requests_function() {
     std::vector<int> timeout_read_requests;
     for (auto& [obj_id, object] : global::objects) {
-        auto temp_timeout_read_requests = object.get_timeout_requests(global::timestamp, 105);
+        int predict_time = 105;      // 需要被丢掉的预测时间
+        int used_time = 0x3f3f3f3f;  // 读取该物品所需要的最小时间
+        for (int i = 0; i < 3; i++) {
+            Disk& disk = global::disks[object.disk_id[i]];
+            int disk_used_time = 0x3f3f3f3f;
+            if (disk.slice_id[disk.head[0]] == disk.slice_id[object.block_id[i][1]]) {
+                disk_used_time = 0;
+            } else if (disk.slice_id[disk.head[1]] == disk.slice_id[object.block_id[i][1]]) {
+                disk_used_time = 0;
+            } else {
+                disk_used_time = 1 + (object.size * 16 + global::G - 1 + object.block_id[i][object.size] - disk.slice_start[disk.slice_id[object.block_id[i][1]]]) / global::G;
+            }
+            used_time = std::min(used_time, disk_used_time);
+        }
+        predict_time -= used_time;
+        auto temp_timeout_read_requests = object.get_timeout_requests(global::timestamp, predict_time);
         for (auto req_id : temp_timeout_read_requests) {
             timeout_read_requests.push_back(req_id);
             // 维护磁盘的状态
@@ -525,54 +540,53 @@ inline std::vector<int> timeout_read_requests_function() {
 
 inline std::vector<std::vector<std::pair<int, int>>> garbage_collection_function() {
     std::vector<std::vector<std::pair<int, int>>> garbage_collection_strategies(global::N + 1);
-    /* for (int i = 1; i <= global::N; i++) {
-         // std::cerr << i << "\n";
-         Disk& disk = global::disks[i];
-         std::vector<std::pair<int, int>> cand;
-         for (int j = 1; j <= disk.slice_num; j++) {
-             if (disk.slice_tag[j] == 0) {
-                 continue;
-             }
-             if (disk.slice_id[disk.head[0]] == j || disk.slice_id[disk.head[1]] == j) {
-                 continue;
-             }
-             std::vector<int> bubble;
-             std::vector<int> data;
-             for (int k = disk.slice_start[j]; k <= disk.slice_end[j]; k++) {
-                 if (disk.blocks[k].object_id != 0) {
-                     data.push_back(k);
-                 }
-             }
-             if (data.empty()) {
-                 continue;
-             }
-             for (int k = data.back(); k >= disk.slice_start[j]; --k) {
-                 if (disk.blocks[k].object_id == 0) {
-                     bubble.push_back(k);
-                 }
-             }
-             std::reverse(bubble.begin(), bubble.end());
-             std::reverse(data.begin(), data.end());
-             for (int k = 0; k < std::min(bubble.size(), data.size()); ++k) {
-                 if (bubble[k] >= data[k]) break;
-                 cand.push_back({bubble[k], data[k]});
-             }
-         }
-         std::sort(cand.begin(), cand.end(),
-                   [&](const auto& a, const auto& b) {
-                       double gain_a = disk.get_slice_gain(disk.slice_id[a.first]);
-                       double gain_b = disk.get_slice_gain(disk.slice_id[b.first]);
-                       if (a.second - a.first != b.second - b.first) return a.second - a.first > b.second - b.first;
-                       if (gain_a != gain_b) {
-                           return gain_a > gain_b;
-                       }
-                   });
-         for (int j = 0; j < std::min(global::K, (int)cand.size()); ++j) {
-             garbage_collection_strategies[i].push_back(cand[j]);
-             swap_block(disk, cand[j].first, cand[j].second);
-         }
-     }
- */
+    for (int i = 1; i <= global::N; i++) {
+        // std::cerr << i << "\n";
+        Disk& disk = global::disks[i];
+        std::vector<std::pair<int, int>> cand;
+        for (int j = 1; j <= disk.slice_num; j++) {
+            if (disk.slice_tag[j] == 0) {
+                continue;
+            }
+            if (disk.slice_id[disk.head[0]] == j || disk.slice_id[disk.head[1]] == j) {
+                continue;
+            }
+            std::vector<int> bubble;
+            std::vector<int> data;
+            for (int k = disk.slice_start[j]; k <= disk.slice_end[j]; k++) {
+                if (disk.blocks[k].object_id != 0) {
+                    data.push_back(k);
+                }
+            }
+            if (data.empty()) {
+                continue;
+            }
+            for (int k = data.back(); k >= disk.slice_start[j]; --k) {
+                if (disk.blocks[k].object_id == 0) {
+                    bubble.push_back(k);
+                }
+            }
+            std::reverse(bubble.begin(), bubble.end());
+            std::reverse(data.begin(), data.end());
+            for (int k = 0; k < std::min(bubble.size(), data.size()); ++k) {
+                if (bubble[k] >= data[k]) break;
+                cand.push_back({bubble[k], data[k]});
+            }
+        }
+        std::sort(cand.begin(), cand.end(),
+                  [&](const auto& a, const auto& b) {
+                      double gain_a = disk.get_slice_gain(disk.slice_id[a.first]);
+                      double gain_b = disk.get_slice_gain(disk.slice_id[b.first]);
+                      if (a.second - a.first != b.second - b.first) return a.second - a.first > b.second - b.first;
+                      if (gain_a != gain_b) {
+                          return gain_a > gain_b;
+                      }
+                  });
+        for (int j = 0; j < std::min(global::K, (int)cand.size()); ++j) {
+            garbage_collection_strategies[i].push_back(cand[j]);
+            swap_block(disk, cand[j].first, cand[j].second);
+        }
+    }
     return garbage_collection_strategies;
 }
 // ---------------交互----------------
