@@ -440,7 +440,6 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
     // std::sort(index.begin() + 1, index.end(),
     //           [&](int i, int j) { return global::disks[i].total_margin_gain < global::disks[j].total_margin_gain; });
     // 貌似干不过随机？
-    std::vector<int> simulate_read_time(2 * global::N + 1);
     // 先按照策略模拟一次，如果没有有效读入，则额外标记为需要跳转
     for (int disk_id = 1; disk_id <= global::N; disk_id++) {
         for (int head_id = 0; head_id < 2; head_id++) {
@@ -460,31 +459,45 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
             clean_gain_after_head(global::disks[disk_id], global::disks[disk_id].head[head_id]);
         }
     }
-
-    for (int disk_id = 1; disk_id <= global::N; disk_id++) {
-        for (int head_id = 0; head_id < 2; head_id++) {
-            Disk& disk = global::disks[disk_id];
-            head_strategies[disk_id][head_id] = simulate_strategy(disk_id, head_id);
-            HeadStrategy& strategy = head_strategies[disk_id][head_id];
-            // 判断是否已经扫完块并且下一步是否要强制跳转
-            // 如果 strategy.actions.size() + disk.head[head_id] 大于最后一个有查询的块，那么下一个时间片就可以跳转
-            int slice_last_query_p = disk.slice_end[disk.slice_id[disk.head[head_id]]];
-            for (int i = disk.slice_end[disk.slice_id[disk.head[head_id]]];
-                 i >= disk.slice_start[disk.slice_id[disk.head[head_id]]]; i--) {
-                if (disk.request_num[i] != 0) {
-                    slice_last_query_p = i;
-                    break;
-                }
+    std::vector<int> index(2 * global::N + 1);
+    std::iota(index.begin(), index.end(), 0);
+    std::vector<int> simulate_read_time(2 * global::N + 1);
+    // 先按照已有策略模拟一次，然后再按照读取次数排序
+    for (int i = 1; i <= global::N; i++) {
+        HeadStrategy strategy1 = simulate_strategy(i, 0), strategy2 = simulate_strategy(i, 1);
+        simulate_read_time[i] =
+            std::count_if(strategy1.actions.begin(), strategy1.actions.end(),
+                          [](const HeadAction& action) { return action.type == HeadActionType::READ; });
+        simulate_read_time[i + global::N] =
+            std::count_if(strategy2.actions.begin(), strategy2.actions.end(),
+                          [](const HeadAction& action) { return action.type == HeadActionType::READ; });
+    }
+    std::sort(index.begin() + 1, index.end(),
+              [&simulate_read_time](int i, int j) { return simulate_read_time[i] > simulate_read_time[j]; });
+    for (int i = 1; i <= 2 * global::N; i++) {
+        int disk_id = index[i] > global::N ? index[i] - global::N : index[i];
+        int head_id = index[i] > global::N ? 1 : 0;
+        Disk& disk = global::disks[disk_id];
+        head_strategies[disk_id][head_id] = simulate_strategy(disk_id, head_id);
+        HeadStrategy& strategy = head_strategies[disk_id][head_id];
+        // 判断是否已经扫完块并且下一步是否要强制跳转
+        // 如果 strategy.actions.size() + disk.head[head_id] 大于最后一个有查询的块，那么下一个时间片就可以跳转
+        int slice_last_query_p = disk.slice_end[disk.slice_id[disk.head[head_id]]];
+        for (int i = disk.slice_end[disk.slice_id[disk.head[head_id]]];
+             i >= disk.slice_start[disk.slice_id[disk.head[head_id]]]; i--) {
+            if (disk.request_num[i] != 0) {
+                slice_last_query_p = i;
+                break;
             }
-            if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
-                clean_gain_after_head(disk, strategy.actions[0].target);
-                should_jmp[disk_id][head_id] = false;
-            } else if ((int)strategy.actions.size() + disk.head[head_id] > slice_last_query_p) {
-                should_jmp[disk_id][head_id] = true;
-            }
-            // 模拟磁头动作
-            simulate_head(disk, head_id, strategy);
         }
+        if (!strategy.actions.empty() && strategy.actions[0].type == HeadActionType::JUMP) {
+            clean_gain_after_head(disk, strategy.actions[0].target);
+            should_jmp[disk_id][head_id] = false;
+        } else if ((int)strategy.actions.size() + disk.head[head_id] > slice_last_query_p) {
+            should_jmp[disk_id][head_id] = true;
+        }
+        // 模拟磁头动作
+        simulate_head(disk, head_id, strategy);
     }
     return head_strategies;
 }
@@ -512,46 +525,54 @@ inline std::vector<int> timeout_read_requests_function() {
 
 inline std::vector<std::vector<std::pair<int, int>>> garbage_collection_function() {
     std::vector<std::vector<std::pair<int, int>>> garbage_collection_strategies(global::N + 1);
-    for (int i = 1; i <= global::N; i++) {
-        // std::cerr << i << "\n";
-        Disk& disk = global::disks[i];
-        std::vector<std::pair<int, int>> cand;
-        for (int j = 1; j <= disk.slice_num; j++) {
-            if (disk.slice_tag[j] == 0) {
-                continue;
-            }
-            if (disk.slice_id[disk.head[0]] == j || disk.slice_id[disk.head[1]] == j) {
-                continue;
-            }
-            std::vector<int> bubble;
-            std::vector<int> data;
-            for (int k = disk.slice_start[j]; k <= disk.slice_end[j]; k++) {
-                if (disk.blocks[k].object_id != 0) {
-                    data.push_back(k);
-                }
-            }
-            if (data.empty()) {
-                continue;
-            }
-            for (int k = data.back(); k >= disk.slice_start[j]; --k) {
-                if (disk.blocks[k].object_id == 0) {
-                    bubble.push_back(k);
-                }
-            }
-            std::reverse(bubble.begin(), bubble.end());
-            std::reverse(data.begin(), data.end());
-            for (int k = 0; k < std::min(bubble.size(), data.size()); ++k) {
-                if (bubble[k] >= data[k]) break;
-                cand.push_back({bubble[k], data[k]});
-            }
-        }
-        std::sort(cand.begin(), cand.end(),
-                  [&](const auto& a, const auto& b) { return a.second - a.first > b.second - b.first; });
-        for (int j = 0; j < std::min(global::K, (int)cand.size()); ++j) {
-            garbage_collection_strategies[i].push_back(cand[j]);
-            swap_block(disk, cand[j].first, cand[j].second);
-        }
-    }
+    /* for (int i = 1; i <= global::N; i++) {
+         // std::cerr << i << "\n";
+         Disk& disk = global::disks[i];
+         std::vector<std::pair<int, int>> cand;
+         for (int j = 1; j <= disk.slice_num; j++) {
+             if (disk.slice_tag[j] == 0) {
+                 continue;
+             }
+             if (disk.slice_id[disk.head[0]] == j || disk.slice_id[disk.head[1]] == j) {
+                 continue;
+             }
+             std::vector<int> bubble;
+             std::vector<int> data;
+             for (int k = disk.slice_start[j]; k <= disk.slice_end[j]; k++) {
+                 if (disk.blocks[k].object_id != 0) {
+                     data.push_back(k);
+                 }
+             }
+             if (data.empty()) {
+                 continue;
+             }
+             for (int k = data.back(); k >= disk.slice_start[j]; --k) {
+                 if (disk.blocks[k].object_id == 0) {
+                     bubble.push_back(k);
+                 }
+             }
+             std::reverse(bubble.begin(), bubble.end());
+             std::reverse(data.begin(), data.end());
+             for (int k = 0; k < std::min(bubble.size(), data.size()); ++k) {
+                 if (bubble[k] >= data[k]) break;
+                 cand.push_back({bubble[k], data[k]});
+             }
+         }
+         std::sort(cand.begin(), cand.end(),
+                   [&](const auto& a, const auto& b) {
+                       double gain_a = disk.get_slice_gain(disk.slice_id[a.first]);
+                       double gain_b = disk.get_slice_gain(disk.slice_id[b.first]);
+                       if (a.second - a.first != b.second - b.first) return a.second - a.first > b.second - b.first;
+                       if (gain_a != gain_b) {
+                           return gain_a > gain_b;
+                       }
+                   });
+         for (int j = 0; j < std::min(global::K, (int)cand.size()); ++j) {
+             garbage_collection_strategies[i].push_back(cand[j]);
+             swap_block(disk, cand[j].first, cand[j].second);
+         }
+     }
+ */
     return garbage_collection_strategies;
 }
 // ---------------交互----------------
