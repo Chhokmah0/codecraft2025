@@ -28,11 +28,39 @@ inline std::vector<std::array<bool, 2>> should_jmp;  // 每一个 slice 读取�
 inline std::vector<std::vector<int>> suffix_sum_read;  // tag 在每个时间片的后续读取次数
 inline std::vector<std::vector<double>> similarity;    // tag 两两之间的相似度
 
+inline int tot_group = 0;                                                 // 当前的 group 数量
+inline std::vector<std::array<std::pair<int, int>, 3>> group_disk_slice;  // group_id -> (disk_id, slice_id)x3
+
 // 本地初始化
 inline void init_local() {
     for (int i = 0; i <= global::N; i++) {
         global::disks.push_back(Disk(i, global::V, global::M));
     }
+
+    // 三三分组
+    std::vector<std::pair<int, int>> temp_disk_slice;
+    for (int j = 1; j < global::disks[0].slice_num; j++) {
+        for (int i = 1; i <= global::N; i++) {
+            temp_disk_slice.push_back({i, j});
+        }
+    }
+    for (int i = 0; i < temp_disk_slice.size(); i += 3) {
+        if (i + 2 >= temp_disk_slice.size()) break;
+        group_disk_slice.push_back({temp_disk_slice[i], temp_disk_slice[i + 1], temp_disk_slice[i + 2]});
+        tot_group++;
+    }
+    // 最后一个 slice 的长度和前面不一样，需要单独处理
+    temp_disk_slice.clear();
+    for (int i = 1; i <= global::N; i++) {
+        temp_disk_slice.push_back({i, global::disks[i].slice_num});
+    }
+    // std::shuffle(temp_disk_slice.begin(), temp_disk_slice.end(), global::rng);
+    for (int i = 0; i < temp_disk_slice.size(); i += 3) {
+        if (i + 2 >= temp_disk_slice.size()) break;
+        group_disk_slice.push_back({temp_disk_slice[i], temp_disk_slice[i + 1], temp_disk_slice[i + 2]});
+        tot_group++;
+    }
+
     should_jmp.resize(global::N + 1);
 
     suffix_sum_read = global::fre_read;
@@ -179,122 +207,89 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         ObjectWriteStrategy& strategy = strategies[object_index[opt]];
 
         strategy.object = object;
-        std::vector<int> disk_ids(global::N);
-        std::iota(disk_ids.begin(), disk_ids.end(), 1);
-        // 选三次硬盘
-        for (int i = 0; i < 3; i++) {
-            std::vector<std::pair<int, int>> disk_block;
-            for (auto disk_id : disk_ids) {
-                // 不能是已经用了的硬盘
-                if (strategy.is_used_disk(disk_id)) {
-                    continue;
-                }
-                Disk& disk = global::disks[disk_id];
-                for (int slice_id = 1; slice_id <= disk.slice_num; slice_id++) {
-                    if (disk.slice_empty_block_num[slice_id] < object.size) {
-                        continue;
-                    }
-                    disk_block.push_back({disk_id, slice_id});
-                }
+        std::vector<int> group_ids;
+        // 提取出可以放置该物品的 group
+        for (int i = 0; i < tot_group; i++) {
+            int disk_id = group_disk_slice[i][0].first;
+            int slice_id = group_disk_slice[i][0].second;
+            Disk& disk = global::disks[disk_id];
+            if (disk.slice_empty_block_num[slice_id] >= object.size) {
+                group_ids.push_back(i);
             }
-            // 按照某些优先级给 slice 排序
-            auto slice_key = [&](const std::pair<int, int>& disk_slice) {
-                struct SliceValue {
-                    bool has_tag;
-                    int tag_num;
-                    int empty_block_num;
-                    int empty_slice_num;
-                    bool neighbor_has_tag;
-                    bool is_tag_id;
+        }
 
-                    bool operator<(const SliceValue& other) const {
-                        // 优先拥有 tag
-                        if (has_tag != other.has_tag) {
-                            return has_tag > other.has_tag;
-                        }
-                        // 优先选择 tag 数量少的 slice
-                        if (tag_num != other.tag_num) {
-                            return tag_num < other.tag_num;
-                        }
-                        // 优先选择空闲块数多的 slice
-                        if (empty_block_num != other.empty_block_num) {
-                            return empty_block_num > other.empty_block_num;
-                        }
-                        // 优先选择空闲 slice 多的 disk
-                        if (empty_slice_num != other.empty_slice_num) {
-                            return empty_slice_num > other.empty_slice_num;
-                        }
-                        // 优先选择邻居有 tag 的 slice
-                        if (neighbor_has_tag != other.neighbor_has_tag) {
-                            return neighbor_has_tag > other.neighbor_has_tag;
-                        }
-                        return false;
+        if (group_ids.empty()) {
+            // 应该不会出现这种情况
+            throw std::runtime_error("No disk can be used.");
+        }
+
+        // 按照某些优先级给 group 排序
+        auto group_key = [&](const int& group_id) {
+            struct GroupValue {
+                bool has_tag;
+                int tag_num;
+                int empty_block_num;
+                int empty_slice_num;
+
+                bool operator<(const GroupValue& other) const {
+                    // 优先拥有 tag
+                    if (has_tag != other.has_tag) {
+                        return has_tag > other.has_tag;
                     }
-                };
+                    // 优先选择 tag 数量少的 slice
+                    if (tag_num != other.tag_num) {
+                        return tag_num < other.tag_num;
+                    }
+                    // 优先选择空闲块数多的 slice
+                    if (empty_block_num != other.empty_block_num) {
+                        return empty_block_num > other.empty_block_num;
+                    }
+                    // 优先选择空闲 slice 多的 disk
+                    if (empty_slice_num != other.empty_slice_num) {
+                        return empty_slice_num > other.empty_slice_num;
+                    }
+                    return false;
+                }
+            };
+            int disk_id = group_disk_slice[group_id][0].first;
+            int slice_id = group_disk_slice[group_id][0].second;
+            Disk& disk = global::disks[disk_id];
+            // 计算 slice 的信息
+            bool has_tag = (disk.slice_tag[slice_id] & (1 << object.tag)) == (1 << object.tag);
+            int tag_num = __builtin_popcount(disk.slice_tag[slice_id]);
+            int empty_block_num = disk.slice_empty_block_num[slice_id];
 
-                const Disk& disk = global::disks[disk_slice.first];
-                int slice_id = disk_slice.second;
-
-                bool has_tag = (disk.slice_tag[slice_id] & (1 << object.tag)) == (1 << object.tag);
-                int l_slice_id = mod(slice_id, 1, disk.slice_num, -1);
-                int r_slice_id = mod(slice_id, 1, disk.slice_num, 1);
-                bool neighbor_has_tag = (disk.slice_tag[l_slice_id] & (1 << object.tag)) == (1 << object.tag) ||
-                                        (disk.slice_tag[r_slice_id] & (1 << object.tag)) == (1 << object.tag);
-
-                int tag_num = __builtin_popcount(disk.slice_tag[slice_id]);
-                int empty_block_num = disk.slice_empty_block_num[slice_id];
+            // 由于三三分组，这里选择三个 slice 所在 disk 中拥有最少 slice 数的硬盘作为参考
+            int min_empty_slice_num = global::disks[disk_id].slice_num;
+            for (int i = 0; i < 3; i++) {
+                int disk_id = group_disk_slice[group_id][i].first;
+                Disk& disk = global::disks[disk_id];
                 int empty_slice_num = 0;
-                for (int i = 1; i <= disk.slice_num; i++) {
-                    if (disk.slice_tag[i] == 0) {
+                for (int j = 1; j <= disk.slice_num; j++) {
+                    if (disk.slice_empty_block_num[j] == disk.slice_end[j] - disk.slice_start[j] + 1) {
                         empty_slice_num++;
                     }
                 }
-                bool is_tag_id = slice_id == object.tag;
-                return SliceValue{has_tag, tag_num, empty_block_num, empty_slice_num, neighbor_has_tag, is_tag_id};
-            };
-            // TODO：如果不 shuffle 的话，不同 tag 的物品会被按顺序放到硬盘上，使得 neighbor_has_tag 的 slice
-            // 数量大大减少
-            std::shuffle(disk_block.begin(), disk_block.end(), global::rng);
-            auto it = std::min_element(disk_block.begin(), disk_block.end(),
-                                       [&](const auto& a, const auto& b) { return slice_key(a) < slice_key(b); });
-            // 选出最大的 slice
-            auto [target_disk_id, target_slice_id] = *it;
-
-            if (target_disk_id == -1) {
-                // 应该不会出现这种情况
-                throw std::runtime_error("No disk can be used.");
+                min_empty_slice_num = std::min(min_empty_slice_num, empty_slice_num);
             }
 
-            // 选好了硬盘和 slice，开始放置
-            strategy.disk_id[i] = target_disk_id;
-            strategy.slice_id[i] = target_slice_id;
-            if (__builtin_popcount(global::disks[target_disk_id].slice_tag[target_slice_id]) % 2 == 1) {
-                int local_tag = 0;  // 找到该块的主色调
-                for (int i = global::disks[target_disk_id].slice_start[target_slice_id];
-                     i <= global::disks[target_disk_id].slice_end[target_slice_id]; i++) {
-                    if (global::disks[target_disk_id].blocks[i].object_tag != 0) {
-                        local_tag = global::disks[target_disk_id].blocks[i].object_tag;
-                        break;
-                    }
-                }
-                if (local_tag == object.tag)
-                    strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
-                else
-                    strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
-            } else {
-                int local_tag = 0;  // 找到该块的主色调
-                for (int i = global::disks[target_disk_id].slice_start[target_slice_id];
-                     i <= global::disks[target_disk_id].slice_end[target_slice_id]; i++) {
-                    if (global::disks[target_disk_id].blocks[i].object_tag != 0) {
-                        local_tag = global::disks[target_disk_id].blocks[i].object_tag;
-                        break;
-                    }
-                }
-                if (local_tag == object.tag)
-                    strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
-                else
-                    strategy.block_id[i] = put_forward(target_disk_id, target_slice_id, object.size);
-            }
+            return GroupValue{has_tag, tag_num, empty_block_num, min_empty_slice_num};
+        };
+        auto slice_cmp = [&](const int& group_id1, const int& group_id2) {
+            return group_key(group_id1) < group_key(group_id2);
+        };
+        std::shuffle(group_ids.begin(), group_ids.end(), global::rng);
+        auto it = std::min_element(group_ids.begin(), group_ids.end(), slice_cmp);
+        // 选出最优的 group_id
+        auto group_id = *it;
+
+        // 选好了硬盘和 slice，开始放置
+        for (int i = 0; i < 3; i++) {
+            int disk_id = group_disk_slice[group_id][i].first;
+            int slice_id = group_disk_slice[group_id][i].second;
+            strategy.disk_id[i] = disk_id;
+            strategy.slice_id[i] = slice_id;
+            strategy.block_id[i] = put_forward(disk_id, slice_id, object.size);
         }
 
         // 保证第二个硬盘上的顺序和第一个硬盘上不一样（put_back 本身就会反向放置）
@@ -616,12 +611,13 @@ inline void run() {
         // 垃圾回收
         // TODO: 临时方案
         if (global::timestamp % 1800 == 0) {
-            io::garbage_collection_input();
-            auto garbage_collection_strategies = garbage_collection_function();
-            io::garbage_collection_output(garbage_collection_strategies);
             std::cerr << global::timestamp << " total busy:" << busy_request_num << ",total done: " << done_request_num
                       << '\n';
             std::cerr.flush();
+            io::garbage_collection_input();
+            auto garbage_collection_strategies = garbage_collection_function();
+            io::garbage_collection_output(garbage_collection_strategies);
+            // io::garbage_collection_output(std::vector<std::vector<std::pair<int, int>>>(global::N + 1));
         }
     }
     std::cerr << "final total busy:" << " " << busy_request_num << ",total done: " << done_request_num << '\n';
