@@ -25,7 +25,7 @@ constexpr auto generate_gain_mult() {
 constexpr auto generate_simluate_mult() {
     std::array<double, 120> SIMLUATE_MULT = {};
     for (size_t i = 0; i < SIMLUATE_MULT.size(); ++i) {
-        SIMLUATE_MULT[i] = i <= 10 ? 0.01 : 0.04;
+        SIMLUATE_MULT[i] = i <= 10 ? 0.015 : 0.045;
     }
     for (size_t i = 0; i < SIMLUATE_MULT.size(); ++i) {
         SIMLUATE_MULT[i] = (i == 0) ? 1 : SIMLUATE_MULT[i - 1] + SIMLUATE_MULT[i];
