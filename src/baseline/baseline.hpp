@@ -638,7 +638,7 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
     }
     std::vector<int> index(2 * global::N + 1);
     std::iota(index.begin(), index.end(), 0);
-    std::vector<int> simulate_read_time(2 * global::N + 1);
+    std::vector<double> simulate_read_time(2 * global::N + 1);
     // 先按照已有策略模拟一次，然后再按照读取次数排序
     for (int i = 1; i <= global::N; i++) {
         HeadStrategy strategy1 = simulate_strategy(i, 0), strategy2 = simulate_strategy(i, 1);
@@ -682,6 +682,8 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
 // -------------------------放弃读取请求-------------------------
 
 // 放弃读取请求，需要维护 disk 和 object 的状态
+std::vector<int> give_up_16;
+std::vector<int> lst_give_up_16;
 inline std::vector<int> timeout_read_requests_function() {
     std::vector<int> timeout_read_requests;
     std::vector<int> finish_G(6);
@@ -709,12 +711,15 @@ inline std::vector<int> timeout_read_requests_function() {
                                       disk.slice_start[disk.slice_id[object.block_id[i][1]]]) /
                                          global::G;
             }
+            double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) / global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
+            if (opt > 0.01) disk_used_time++;
             used_time = std::min(used_time, disk_used_time);
         }
         predict_time -= used_time;
         auto temp_timeout_read_requests = object.get_timeout_requests(global::timestamp, predict_time);
         for (auto req_id : temp_timeout_read_requests) {
             timeout_read_requests.push_back(req_id);
+            give_up_16[object.tag]++;
             give_up_request(req_id);
         }
     }
@@ -782,6 +787,8 @@ inline void run() {
     io::init_input();
     init_local();
     io::init_output();
+    give_up_16.resize(global::M + 1);
+    lst_give_up_16.resize(global::M + 1);
     int busy_request_num = 0, done_request_num = 0;  // 一个统计有多少查询被busy,完成了多少的变量。
     for (global::timestamp = 1; global::timestamp <= global::T + 105; global::timestamp++) {
         // debug
@@ -807,15 +814,25 @@ inline void run() {
         io::write_object_output(write_strategies);
 
         // 对象读取事件
+        std::vector<int> pre_busy;  // 根据超时率扔掉一堆玩意
         auto read_objects = io::read_object_input();
         for (const auto& [req_id, object_id] : read_objects) {
             Object& object = global::objects[object_id];
-            object.add_request(req_id, global::timestamp);
-            for (int i = 0; i < 3; i++) {
-                Disk& disk = global::disks[object.disk_id[i]];
-                disk.query(object, req_id);
+            bool flag = 1;
+            // opt超时率
+            double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) / global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
+            if (opt > 0.05 && global::rng() % 100 > 1.0 / opt) {  // 这里分析数据来的.jpg
+                pre_busy.push_back(req_id);
+                flag = 0;
             }
-            global::request_object_id[req_id] = object_id;
+            if (flag) {
+                object.add_request(req_id, global::timestamp);
+                for (int i = 0; i < 3; i++) {
+                    Disk& disk = global::disks[object.disk_id[i]];
+                    disk.query(object, req_id);
+                }
+                global::request_object_id[req_id] = object_id;
+            }
         }
         // NOTE: 模拟磁盘头动作的任务交给 head_strategy_function
         completed_requests.clear();
@@ -824,6 +841,7 @@ inline void run() {
         done_request_num += completed_requests.size();
         // 获取放弃/超时的读取请求
         auto timeout_read_requests = timeout_read_requests_function();
+        for (auto v : pre_busy) timeout_read_requests.push_back(v);
         busy_request_num += (int)timeout_read_requests.size();
         io::busy_requests_output(timeout_read_requests);
         // 一轮结束，更新磁盘的状态
@@ -835,7 +853,13 @@ inline void run() {
         if (global::timestamp % 1800 == 0) {
             std::cerr << global::timestamp << " total busy:" << busy_request_num << ",total done: " << done_request_num
                       << '\n';
+
+            for (int i = 1; i <= global::M; ++i) {
+                std::cerr << "id " << i << " " << 1.0 * (give_up_16[i] - lst_give_up_16[i]) / global::fre_read[i][global::timestamp / 1800] << " ";
+            }
+            std::cerr << "\n";
             std::cerr.flush();
+            lst_give_up_16 = give_up_16;
             io::garbage_collection_input();
             auto garbage_collection_strategies = garbage_collection_function();
             io::garbage_collection_output(garbage_collection_strategies);
