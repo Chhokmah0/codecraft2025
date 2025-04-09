@@ -218,6 +218,7 @@ inline void init_local() {
         tot_group++;
     }
     group_disk_slice = chosen_disk_slice();
+    std::shuffle(group_disk_slice.begin(), group_disk_slice.end(), global::rng);
     tot_group = group_disk_slice.size();
     // 最后一个 slice 的长度和前面不一样，需要单独处理
     /*temp_disk_slice.clear();
@@ -686,10 +687,10 @@ inline std::vector<int> timeout_read_requests_function() {
     std::vector<int> finish_G(6);
     //{1, 64, 52, 42, 34, 28, 23, 19, 16};
     finish_G[0] = 0;
-    finish_G[1] = 34;
-    finish_G[2] = 28 + finish_G[1];
-    finish_G[3] = 23 + finish_G[2];
-    finish_G[4] = 19 + finish_G[3];
+    finish_G[1] = 16;
+    finish_G[2] = 16 + finish_G[1];
+    finish_G[3] = 16 + finish_G[2];
+    finish_G[4] = 16 + finish_G[3];
     finish_G[5] = 16 + finish_G[4];
     for (auto& [obj_id, object] : global::objects) {
         int predict_time = 105;      // 需要被丢掉的预测时间
