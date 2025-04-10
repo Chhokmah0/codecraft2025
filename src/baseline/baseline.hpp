@@ -708,11 +708,11 @@ inline std::vector<int> timeout_read_requests_function() {
     std::vector<int> finish_G(6);
     //{1, 64, 52, 42, 34, 28, 23, 19, 16};
     finish_G[0] = 0;
-    finish_G[1] = 16;
-    finish_G[2] = 16 + finish_G[1];
-    finish_G[3] = 16 + finish_G[2];
-    finish_G[4] = 16 + finish_G[3];
-    finish_G[5] = 16 + finish_G[4];
+    finish_G[1] = 23;
+    finish_G[2] = 23 + finish_G[1];
+    finish_G[3] = 23 + finish_G[2];
+    finish_G[4] = 23 + finish_G[3];
+    finish_G[5] = 23 + finish_G[4];
     for (auto& [obj_id, object] : global::objects) {
         int predict_time = 105;      // 需要被丢掉的预测时间
         int used_time = 0x3f3f3f3f;  // 读取该物品所需要的最小时间
