@@ -203,7 +203,7 @@ std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice() {
 
 inline void init_local() {
     for (int i = 0; i <= global::N; i++) {
-        global::disks.push_back(Disk(i, global::V, global::M));
+        global::disks.push_back(Disk(i, global::V, global::M, 16));
     }
     // 三三分组
     std::vector<std::pair<int, int>> temp_disk_slice;
@@ -217,9 +217,9 @@ inline void init_local() {
         group_disk_slice.push_back({temp_disk_slice[i], temp_disk_slice[i + 1], temp_disk_slice[i + 2]});
         tot_group++;
     }
-    group_disk_slice = chosen_disk_slice();
+    // group_disk_slice = chosen_disk_slice();
+    // tot_group = group_disk_slice.size();
     std::shuffle(group_disk_slice.begin(), group_disk_slice.end(), global::rng);
-    tot_group = group_disk_slice.size();
     // 最后一个 slice 的长度和前面不一样，需要单独处理
     /*temp_disk_slice.clear();
     for (int i = 1; i <= global::N; i++) {

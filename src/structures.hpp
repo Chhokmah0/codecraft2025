@@ -12,7 +12,17 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-#include <vector>
+#include <vector>   
+#include <ext/pb_ds/assoc_container.hpp> 
+#include <ext/pb_ds/hash_policy.hpp> 
+
+template<typename T, typename U>
+// using HashTable = __gnu_pbds::cc_hash_table<T, U>; 
+using HashTable = std::unordered_map<T, U>;
+
+template<typename T>
+// using HashSet = __gnu_pbds::cc_hash_table<T, __gnu_pbds::null_type>;
+using HashSet = std::unordered_set<T>;
 
 constexpr double ALPHA = 0.999;
 constexpr auto generate_gain_mult() {
@@ -88,9 +98,9 @@ class Object {
     int slice_id[3];                                          // 三个副本的目标 slice
     std::vector<int> block_id[3];                             // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
     std::deque<ObjectReadTime> read_queue;                    // 读取请求的队列，存储的是请求的编号和时间戳
-    std::unordered_map<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
+    HashTable<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
     std::vector<int> request_number;                          // 第 i 个分块上的未完成请求数量
-    std::unordered_set<int> unclean_gain_requests;            // 被清空收益的请求
+    HashSet<int> unclean_gain_requests;            // 被清空收益的请求
    public:
     Object() = default;
     Object(ObjectWriteStrategy strategy) {
@@ -137,7 +147,7 @@ class Object {
             int req_id = read_queue.front().req_id;
             read_queue.pop_front();
 
-            if (!read_requests.count(req_id)) {
+            if (read_requests.find(req_id) == read_requests.end()) {
                 continue;
             }
             timeout_requests.push_back(req_id);
@@ -149,9 +159,9 @@ class Object {
 
     // 放弃某个请求
     void erase_request(int req_id) {
-        assert(read_requests.count(req_id));
+        assert(read_requests.find(req_id) != read_requests.end());
         read_requests.erase(req_id);
-        if (unclean_gain_requests.count(req_id)) {
+        if (unclean_gain_requests.find(req_id) != unclean_gain_requests.end()) {
             unclean_gain_requests.erase(req_id);
         }
     }
@@ -215,12 +225,12 @@ class Disk {
     // 允许被删除的请求是不存在的
     struct TimeStruct {
         int timestamp;                     // 时间片的编号
-        std::unordered_set<int> requests;  // 这个时间片的请求
+        HashSet<int> requests;  // 这个时间片的请求
         size_t sum_read_size;              // 读取的大小之和
         size_t sum_read_count;             // 读取的次数之和
 
         void add_request(const Object& object, int req_id) {
-            assert(requests.count(req_id) == 0);
+            assert(requests.find(req_id) == requests.end());
             requests.insert(req_id);
             sum_read_size += object.size;
             sum_read_count++;
@@ -228,7 +238,7 @@ class Disk {
 
         void remove_request(const Object& object, int req_id) {
             // 允许被删除的请求是不存在的
-            if (requests.count(req_id) == 0) {
+            if (requests.find(req_id) == requests.end()) {
                 return;
             }
             requests.erase(req_id);
@@ -314,11 +324,11 @@ class Disk {
 
     // 每个 slice 中，每个时间片的请求，time_requests[0] 是最新的，time_requests[i] 是往前第 i 个时间片的请求
     std::vector<std::deque<TimeStruct>> slice_time_requests;
-    std::unordered_map<int, int> request_time;  // (req_id, timestamp)
+    HashTable<int, int> request_time;  // (req_id, timestamp)
 
     EmptyRanges empty_ranges;  // 未被写入的连续块
 
-    Disk(int disk_id, int v, int m, int predict_time = 105)
+    Disk(int disk_id, int v, int m, int _slice_num, int predict_time = 105)
         : disk_id(disk_id),
           v(v),
           cur_time(0),
@@ -330,8 +340,8 @@ class Disk {
           head{1, 1},
           pre_action{HeadActionType::JUMP, HeadActionType::JUMP},
           pre_action_cost{0, 0},
-          slice_size(std::max(5, (v - 1) / m + 1)),
-          slice_num((v - 1) / slice_size + 1),
+          slice_size((v + _slice_num - 1) / _slice_num),
+          slice_num((v + slice_size - 1) / slice_size),
           slice_id(v + 1),
           slice_start(slice_num + 1),
           slice_end(slice_num + 1),
@@ -424,15 +434,15 @@ class Disk {
     }
 
     void erase_request(const Object& object, int req_id) {
-        assert(request_time.count(req_id));
+        assert(request_time.find(req_id) != request_time.end());
         int copy_id = get_copy_id(object);
         int slice_id = object.slice_id[copy_id];
 
         // 维护 block
-        const ObjectReadStatus& request = object.read_requests.at(req_id);
+        const ObjectReadStatus& request = const_cast<Object&>(object).read_requests[req_id];
         for (int i = 1; i <= object.size; i++) {
             // 如果已经被读取 or object 中已经读取完毕这个请求
-            if (request.readed[i] || object.read_requests.count(req_id) == 0) {
+            if (request.readed[i] || object.read_requests.find(req_id) == object.read_requests.end()) {
                 continue;
             }
             int index = object.block_id[copy_id][i];
@@ -495,7 +505,7 @@ class Disk {
         int copy_id = get_copy_id(object);
         int slice_id = object.slice_id[copy_id];
         for (auto req_id : object.unclean_gain_requests) {
-            if (request_time.count(req_id)) {
+            if (request_time.find(req_id) != request_time.end()) {
                 int timestamp = request_time[req_id];
                 int passed_time = cur_time - timestamp;
                 if (passed_time > predict_time) {
@@ -519,7 +529,10 @@ class Disk {
             if (time_requests.size() > predict_time + 1) {
                 timeout_requests.insert(timeout_requests.end(), time_requests.back().requests.begin(),
                                         time_requests.back().requests.end());
+                std::swap(time_requests.back(), time_requests.front());
                 time_requests.pop_back();
+                time_requests.front().clear_requests();
+                time_requests.front().timestamp = cur_time;
             }
         }
         return timeout_requests;

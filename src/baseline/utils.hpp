@@ -50,7 +50,7 @@ inline void clean_gain_after_head(Disk& disk, int head) {
 }
 
 inline void give_up_request(int req_id) {
-    assert(global::request_object_id.count(req_id));
+    assert(global::request_object_id.find(req_id) != global::request_object_id.end());
     int object_id = global::request_object_id[req_id];
     Object& object = global::objects[object_id];
     // 维护磁盘的状态
@@ -96,7 +96,7 @@ inline void swap_block(int disk_id, int block_id1, int block_id2) {
 }
 
 inline void delete_object(int object_id) {
-    assert(global::objects.count(object_id));
+    assert(global::objects.find(object_id) != global::objects.end());
 
     // 清理硬盘上的数据
     Object& object = global::objects[object_id];
