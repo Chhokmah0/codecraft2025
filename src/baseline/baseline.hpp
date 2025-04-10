@@ -33,11 +33,11 @@ inline int tot_group = 0;                                                 // 当
 inline std::vector<std::array<std::pair<int, int>, 3>> group_disk_slice;  // group_id -> (disk_id, slice_id)x3
 
 // 本地初始化
-std::vector<std::vector<int>> generate_all_triples() {
+std::vector<std::vector<int>> generate_all_triples(int num_disks) {
     std::vector<std::vector<int>> triples;
-    for (int i = 0; i < 8; i++) {
-        for (int j = i + 1; j < 9; j++) {
-            for (int k = j + 1; k < 10; k++) {
+    for (int i = 0; i < num_disks - 2; i++) {
+        for (int j = i + 1; j < num_disks - 1; j++) {
+            for (int k = j + 1; k < num_disks; k++) {
                 triples.push_back({i, j, k});
             }
         }
@@ -60,17 +60,15 @@ double compute_variance(const std::map<std::pair<int, int>, int>& pair_counts) {
     return variance / pair_counts.size();
 }
 
-std::vector<std::vector<int>> select_balanced_groups(int target_groups) {
-    const int max_appearance = 16;
-
-    std::vector<std::vector<int>> all_triples = generate_all_triples();
+std::vector<std::vector<int>> select_balanced_groups(int num_disks, int max_appearance, int target_groups) {
+    std::vector<std::vector<int>> all_triples = generate_all_triples(num_disks);
     std::vector<std::vector<int>> selected_groups;
     std::map<std::pair<int, int>, int> pair_counts;
     std::map<int, int> disk_counts;
 
     // 初始化所有可能的数字对
-    for (int i = 0; i < 10; ++i) {
-        for (int j = i + 1; j < 10; ++j) {
+    for (int i = 0; i < num_disks; ++i) {
+        for (int j = i + 1; j < num_disks; ++j) {
             pair_counts[{i, j}] = 0;
         }
     }
@@ -158,9 +156,9 @@ std::vector<std::vector<int>> select_balanced_groups(int target_groups) {
 
     return selected_groups;
 }
-std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice() {
-    int target_groups = 53;  // 目标分组数
-    std::vector<std::vector<int>> balanced_groups = select_balanced_groups(target_groups);
+
+std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice(int num_disks, int max_appearance, int target_groups) {
+    std::vector<std::vector<int>> balanced_groups = select_balanced_groups(num_disks, max_appearance, target_groups);
 
     // 统计每个硬盘的出现次数
     std::map<int, int> disk_counts;
@@ -182,7 +180,7 @@ std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice() {
         }
     }
 
-    std::vector<int> appearance(global::N + 1, 0);  // 初始化为0
+    std::vector<int> appearance(num_disks + 1, 0);  // 初始化为0
     std::vector<std::pair<int, int>> temp_disk_slice;
     std::vector<std::vector<std::pair<int, int>>> grouped_disk_slice(balanced_groups.size());  // 用于存储分组后的disk slice
 
@@ -238,7 +236,7 @@ inline void init_local() {
         group_disk_slice.push_back({temp_disk_slice[i], temp_disk_slice[i + 1], temp_disk_slice[i + 2]});
         tot_group++;
     }
-    group_disk_slice = chosen_disk_slice();
+    group_disk_slice = chosen_disk_slice(global::N, 16, 53);
     tot_group = group_disk_slice.size();
     std::shuffle(group_disk_slice.begin(), group_disk_slice.end(), global::rng);
     //  最后一个 slice 的长度和前面不一样，需要单独处理
@@ -733,7 +731,7 @@ inline std::vector<int> timeout_read_requests_function() {
                                          global::G;
             }
             double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) / global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
-            if (opt > 0.01) disk_used_time++;
+            if (opt > 0.01) disk_used_time = 105;
             used_time = std::min(used_time, disk_used_time);
         }
         predict_time -= used_time;
