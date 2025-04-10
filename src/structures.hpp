@@ -4,6 +4,8 @@
 #include <array>
 #include <cassert>
 #include <deque>
+#include <ext/pb_ds/assoc_container.hpp>
+#include <ext/pb_ds/hash_policy.hpp>
 #include <iterator>
 #include <limits>
 #include <ostream>
@@ -12,15 +14,13 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <utility>
-#include <vector>   
-#include <ext/pb_ds/assoc_container.hpp> 
-#include <ext/pb_ds/hash_policy.hpp> 
+#include <vector>
 
-template<typename T, typename U>
-// using HashTable = __gnu_pbds::cc_hash_table<T, U>; 
+template <typename T, typename U>
+// using HashTable = __gnu_pbds::cc_hash_table<T, U>;
 using HashTable = std::unordered_map<T, U>;
 
-template<typename T>
+template <typename T>
 // using HashSet = __gnu_pbds::cc_hash_table<T, __gnu_pbds::null_type>;
 using HashSet = std::unordered_set<T>;
 
@@ -94,13 +94,13 @@ class Object {
     int id;
     int size;
     int tag;
-    int disk_id[3];                                           // 三个副本的目标硬盘
-    int slice_id[3];                                          // 三个副本的目标 slice
-    std::vector<int> block_id[3];                             // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
-    std::deque<ObjectReadTime> read_queue;                    // 读取请求的队列，存储的是请求的编号和时间戳
+    int disk_id[3];                                  // 三个副本的目标硬盘
+    int slice_id[3];                                 // 三个副本的目标 slice
+    std::vector<int> block_id[3];                    // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
+    std::deque<ObjectReadTime> read_queue;           // 读取请求的队列，存储的是请求的编号和时间戳
     HashTable<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
-    std::vector<int> request_number;                          // 第 i 个分块上的未完成请求数量
-    HashSet<int> unclean_gain_requests;            // 被清空收益的请求
+    std::vector<int> request_number;                 // 第 i 个分块上的未完成请求数量
+    HashSet<int> unclean_gain_requests;              // 被清空收益的请求
    public:
     Object() = default;
     Object(ObjectWriteStrategy strategy) {
@@ -224,10 +224,10 @@ class Disk {
     // 该数据结构用于维护时间片，会被用来计算 gain
     // 允许被删除的请求是不存在的
     struct TimeStruct {
-        int timestamp;                     // 时间片的编号
+        int timestamp;          // 时间片的编号
         HashSet<int> requests;  // 这个时间片的请求
-        size_t sum_read_size;              // 读取的大小之和
-        size_t sum_read_count;             // 读取的次数之和
+        size_t sum_read_size;   // 读取的大小之和
+        size_t sum_read_count;  // 读取的次数之和
 
         void add_request(const Object& object, int req_id) {
             assert(requests.find(req_id) == requests.end());

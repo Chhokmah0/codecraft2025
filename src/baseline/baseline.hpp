@@ -181,23 +181,44 @@ std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice() {
             }
         }
     }
-    std::vector<int> appearance(global::N + 1);
+
+    std::vector<int> appearance(global::N + 1, 0);  // 初始化为0
     std::vector<std::pair<int, int>> temp_disk_slice;
+    std::vector<std::vector<std::pair<int, int>>> grouped_disk_slice(balanced_groups.size());  // 用于存储分组后的disk slice
+
     for (size_t i = 0; i < balanced_groups.size(); i++) {
-        for (int disk : balanced_groups[i]) {
+        for (int disk_index = 0; disk_index < balanced_groups[i].size(); ++disk_index) {
+            int disk = balanced_groups[i][disk_index];
             appearance[disk + 1]++;
-            temp_disk_slice.push_back({disk + 1, appearance[disk + 1]});
+            grouped_disk_slice[i].push_back({disk + 1, appearance[disk + 1]});  // 存储到对应的分组中
         }
     }
+
     std::vector<std::array<std::pair<int, int>, 3>> res;
-    for (int i = 0; i < temp_disk_slice.size(); i += 3) {
-        if (i + 2 >= temp_disk_slice.size()) break;
-        res.push_back({temp_disk_slice[i], temp_disk_slice[i + 1], temp_disk_slice[i + 2]});
-        std::cerr << temp_disk_slice[i].first << " " << temp_disk_slice[i].second << " ";
-        std::cerr << temp_disk_slice[i + 1].first << " " << temp_disk_slice[i + 1].second << " ";
-        std::cerr << temp_disk_slice[i + 2].first << " " << temp_disk_slice[i + 2].second << "\n";
-        tot_group++;
+    for (const auto& group : grouped_disk_slice) {
+        if (group.size() == 3) {
+            res.push_back({group[0], group[1], group[2]});
+            std::cerr << group[0].first << " " << group[0].second << " ";
+            std::cerr << group[1].first << " " << group[1].second << " ";
+            std::cerr << group[2].first << " " << group[2].second << "\n";
+            tot_group++;
+        }
     }
+
+    // 后处理：检查磁盘出现次数并调整
+    std::map<int, int> final_disk_counts;
+    for (const auto& triple : res) {
+        for (const auto& pair : triple) {
+            final_disk_counts[pair.first]++;
+        }
+    }
+
+    // 打印最终的磁盘计数
+    std::cerr << "Final Disk Counts: " << std::endl;
+    for (const auto& [disk, count] : final_disk_counts) {
+        std::cerr << "Disk " << disk << ": " << count << std::endl;
+    }
+
     return res;
 }
 
@@ -217,10 +238,10 @@ inline void init_local() {
         group_disk_slice.push_back({temp_disk_slice[i], temp_disk_slice[i + 1], temp_disk_slice[i + 2]});
         tot_group++;
     }
-    // group_disk_slice = chosen_disk_slice();
-    // tot_group = group_disk_slice.size();
+    group_disk_slice = chosen_disk_slice();
+    tot_group = group_disk_slice.size();
     std::shuffle(group_disk_slice.begin(), group_disk_slice.end(), global::rng);
-    // 最后一个 slice 的长度和前面不一样，需要单独处理
+    //  最后一个 slice 的长度和前面不一样，需要单独处理
     /*temp_disk_slice.clear();
     for (int i = 1; i <= global::N; i++) {
         temp_disk_slice.push_back({i, global::disks[i].slice_num});
@@ -821,7 +842,7 @@ inline void run() {
             bool flag = 1;
             // opt超时率
             double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) / global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
-            if (opt > 0.05 && global::rng() % 100 > 1.0 / opt) {  // 这里分析数据来的.jpg
+            if (opt > 0.03 && global::rng() % 100 > 1.0 / opt) {  // 这里分析数据来的.jpg
                 pre_busy.push_back(req_id);
                 flag = 0;
             }

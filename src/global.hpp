@@ -21,8 +21,8 @@ inline std::mt19937_64 rng;  // 全局随机器
 inline std::vector<std::vector<int>> fre_del, fre_write, fre_read;
 inline int fre_len;
 
-inline int timestamp;                                   // 全局时间戳
-inline std::vector<Disk> disks;                         // 从 1 开始编号
+inline int timestamp;                          // 全局时间戳
+inline std::vector<Disk> disks;                // 从 1 开始编号
 inline HashTable<int, Object> objects;         // (object_id, Object)
 inline HashTable<int, int> request_object_id;  // (req_id, object_id)
 }  // namespace global
