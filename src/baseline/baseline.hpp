@@ -708,11 +708,11 @@ inline std::vector<int> timeout_read_requests_function() {
     std::vector<int> finish_G(6);
     //{1, 64, 52, 42, 34, 28, 23, 19, 16};
     finish_G[0] = 0;
-    finish_G[1] = 23;
-    finish_G[2] = 23 + finish_G[1];
-    finish_G[3] = 23 + finish_G[2];
-    finish_G[4] = 23 + finish_G[3];
-    finish_G[5] = 23 + finish_G[4];
+    finish_G[1] = 16;
+    finish_G[2] = 16 + finish_G[1];
+    finish_G[3] = 16 + finish_G[2];
+    finish_G[4] = 16 + finish_G[3];
+    finish_G[5] = 16 + finish_G[4];
     for (auto& [obj_id, object] : global::objects) {
         int predict_time = 105;      // 需要被丢掉的预测时间
         int used_time = 0x3f3f3f3f;  // 读取该物品所需要的最小时间
@@ -835,11 +835,36 @@ inline void run() {
         // 对象读取事件
         std::vector<int> pre_busy;  // 根据超时率扔掉一堆玩意
         auto read_objects = io::read_object_input();
+        std::vector<std::vector<double>> disk_slice_gain(global::N + 1, std::vector<double>(global::disks[0].slice_num + 1));
+        std::vector<std::vector<int>> disk_slice_gain_order(global::N + 1, std::vector<int>(global::disks[0].slice_num + 1));
+
+        /*for (int i = 1; i <= global::N; ++i) {
+            for (int j = 1; j <= global::disks[0].slice_num; ++j) {
+                disk_slice_gain[i][j] = global::disks[i].get_slice_gain(j);
+            }
+            std::vector<std::pair<double, int>> slice_gain_with_index;
+            for (int j = 1; j <= global::disks[0].slice_num; ++j) {
+                slice_gain_with_index.push_back({disk_slice_gain[i][j], j});
+            }
+            // 按照 slice_gain 降序排序
+            std::sort(slice_gain_with_index.begin(), slice_gain_with_index.end(),
+                      [](const std::pair<double, int>& a, const std::pair<double, int>& b) {
+                          return a.first > b.first;  // 降序
+                      });
+
+            // 计算每个 slice 的排名
+            for (int j = 0; j < global::disks[0].slice_num; ++j) {
+                disk_slice_gain_order[i][slice_gain_with_index[j].second] = j + 1;
+            }
+        }*/
         for (const auto& [req_id, object_id] : read_objects) {
             Object& object = global::objects[object_id];
             bool flag = 1;
             // opt超时率
             double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) / global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
+            /*int pos1 = disk_slice_gain_order[object.disk_id[0]][object.slice_id[0]],
+                pos2 = disk_slice_gain_order[object.disk_id[1]][object.slice_id[1]],
+                pos3 = disk_slice_gain_order[object.disk_id[2]][object.slice_id[2]];*/
             if (opt > 0.03 && global::rng() % 100 > 1.0 / opt) {  // 这里分析数据来的.jpg
                 pre_busy.push_back(req_id);
                 flag = 0;
