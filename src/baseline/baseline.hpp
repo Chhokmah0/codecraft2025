@@ -196,9 +196,9 @@ std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice(int num_disks,
     for (const auto& group : grouped_disk_slice) {
         if (group.size() == 3) {
             res.push_back({group[0], group[1], group[2]});
-            std::cerr << group[0].first << " " << group[0].second << " ";
-            std::cerr << group[1].first << " " << group[1].second << " ";
-            std::cerr << group[2].first << " " << group[2].second << "\n";
+            // std::cerr << group[0].first << " " << group[0].second << " ";
+            // std::cerr << group[1].first << " " << group[1].second << " ";
+            // std::cerr << group[2].first << " " << group[2].second << "\n";
             tot_group++;
         }
     }
@@ -212,9 +212,9 @@ std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice(int num_disks,
     }
 
     // 打印最终的磁盘计数
-    std::cerr << "Final Disk Counts: " << std::endl;
+    // std::cerr << "Final Disk Counts: " << std::endl;
     for (const auto& [disk, count] : final_disk_counts) {
-        std::cerr << "Disk " << disk << ": " << count << std::endl;
+        // std::cerr << "Disk " << disk << ": " << count << std::endl;
     }
 
     return res;
@@ -383,7 +383,9 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
     // 给一个 object 的打分函数
     auto object_key = [&](int i) {
         int time_block = std::min((global::timestamp - 1) / 1800 + 1, global::fre_len);
-        int read_count = suffix_sum_read[objects[i].tag][time_block];
+
+        int read_count = global::fre_read[objects[i].tag][time_block];
+        // int read_count = suffix_sum_read[objects[i].tag][time_block];
         int size = objects[i].size;
         return std::make_tuple(size, read_count, objects[i].tag);
     };
@@ -539,6 +541,8 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
     // dp[i][j] 表示磁头在位置 i 时，使用第 j 次 READ 后的最大剩余令牌
     std::vector<std::array<int, COST_SIZE>> dp;
     std::vector<std::array<int, COST_SIZE>> pre_read_count;
+    // dp.clear();
+    // pre_read_count.clear();
     for (int i = 0, p = disk.head[head_id]; i <= global::V; i++) {
         dp.push_back(std::array<int, COST_SIZE>());
         dp.back().fill(-1);
@@ -606,10 +610,14 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
         }
         p = mod(p, 1, global::V, 1);
     }
+    while (!dp.empty() && std::all_of(dp.back().begin() + 1, dp.back().end(), [](int x) { return x == -1; })) {
+        dp.pop_back();
+        pre_read_count.pop_back();
+    }
     // 获取 dp 的方案
     if (!dp.empty()) {
         int dp_p = dp.size() - 1;
-        int dp_j = std::max_element(dp.back().begin(), dp.back().end()) - dp.back().begin();
+        int dp_j = std::max_element(dp.back().begin() + 1, dp.back().end()) - dp.back().begin();
         while (dp_p >= 0) {
             if (dp_j == 0) {
                 strategy.add_action(HeadActionType::PASS);
@@ -636,25 +644,6 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
     // std::sort(index.begin() + 1, index.end(),
     //           [&](int i, int j) { return global::disks[i].total_margin_gain < global::disks[j].total_margin_gain; });
     // 貌似干不过随机？
-    // 先按照策略模拟一次，如果没有有效读入，则额外标记为需要跳转
-    for (int disk_id = 1; disk_id <= global::N; disk_id++) {
-        for (int head_id = 0; head_id < 2; head_id++) {
-            head_strategies[disk_id][head_id] = simulate_strategy(disk_id, head_id);
-            HeadStrategy& strategy = head_strategies[disk_id][head_id];
-            if (strategy.actions.empty()) {
-                should_jmp[disk_id][head_id] = true;
-            }
-        }
-    }
-    // 清理所有不需要跳转的磁头往后的 block 贡献
-    for (int disk_id = 1; disk_id <= global::N; disk_id++) {
-        for (int head_id = 0; head_id < 2; head_id++) {
-            if (should_jmp[disk_id][head_id]) {
-                continue;
-            }
-            clean_gain_after_head(global::disks[disk_id], global::disks[disk_id].head[head_id]);
-        }
-    }
     std::vector<int> index(2 * global::N + 1);
     std::iota(index.begin(), index.end(), 0);
     std::vector<double> simulate_read_time(2 * global::N + 1);
@@ -667,6 +656,22 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
         simulate_read_time[i + global::N] =
             std::count_if(strategy2.actions.begin(), strategy2.actions.end(),
                           [](const HeadAction& action) { return action.type == HeadActionType::READ; });
+        // 如果策略为空，那么强制跳转
+        if (strategy1.actions.empty()) {
+            should_jmp[i][0] = true;
+        }
+        if (strategy2.actions.empty()) {
+            should_jmp[i][1] = true;
+        }
+    }
+    // 清理所有不需要跳转的磁头往后的 block 贡献
+    for (int disk_id = 1; disk_id <= global::N; disk_id++) {
+        for (int head_id = 0; head_id < 2; head_id++) {
+            if (should_jmp[disk_id][head_id]) {
+                continue;
+            }
+            clean_gain_after_head(global::disks[disk_id], global::disks[disk_id].head[head_id]);
+        }
     }
     std::sort(index.begin() + 1, index.end(),
               [&simulate_read_time](int i, int j) { return simulate_read_time[i] > simulate_read_time[j]; });
@@ -837,11 +842,14 @@ inline void run() {
         auto read_objects = io::read_object_input();
         std::vector<std::vector<double>> disk_slice_gain(global::N + 1, std::vector<double>(global::disks[0].slice_num + 1));
         std::vector<std::vector<int>> disk_slice_gain_order(global::N + 1, std::vector<int>(global::disks[0].slice_num + 1));
-
-        /*for (int i = 1; i <= global::N; ++i) {
+        // 计算slice的gain,来给slice排序,方便丢request
+        for (int i = 1; i <= global::N; ++i) {
             for (int j = 1; j <= global::disks[0].slice_num; ++j) {
                 disk_slice_gain[i][j] = global::disks[i].get_slice_gain(j);
             }
+            Disk& disk = global::disks[i];
+            disk_slice_gain[i][disk.slice_id[disk.head[0]]] = std::numeric_limits<double>::max();
+            disk_slice_gain[i][disk.slice_id[disk.head[1]]] = std::numeric_limits<double>::max();
             std::vector<std::pair<double, int>> slice_gain_with_index;
             for (int j = 1; j <= global::disks[0].slice_num; ++j) {
                 slice_gain_with_index.push_back({disk_slice_gain[i][j], j});
@@ -856,16 +864,16 @@ inline void run() {
             for (int j = 0; j < global::disks[0].slice_num; ++j) {
                 disk_slice_gain_order[i][slice_gain_with_index[j].second] = j + 1;
             }
-        }*/
+        }
         for (const auto& [req_id, object_id] : read_objects) {
             Object& object = global::objects[object_id];
             bool flag = 1;
             // opt超时率
             double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) / global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
-            /*int pos1 = disk_slice_gain_order[object.disk_id[0]][object.slice_id[0]],
+            int pos1 = disk_slice_gain_order[object.disk_id[0]][object.slice_id[0]],
                 pos2 = disk_slice_gain_order[object.disk_id[1]][object.slice_id[1]],
-                pos3 = disk_slice_gain_order[object.disk_id[2]][object.slice_id[2]];*/
-            if (opt > 0.03 && global::rng() % 100 > 1.0 / opt) {  // 这里分析数据来的.jpg
+                pos3 = disk_slice_gain_order[object.disk_id[2]][object.slice_id[2]];
+            if (opt > 0.02 && global::rng() % 100 > 1.0 / opt) {  // 这里分析数据来的.jpg
                 pre_busy.push_back(req_id);
                 flag = 0;
             }
