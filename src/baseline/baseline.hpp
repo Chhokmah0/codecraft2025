@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <array>
 #include <cassert>
+#include <ctime>
 #include <functional>
 #include <iterator>
 #include <map>
@@ -708,7 +709,9 @@ inline std::vector<std::array<HeadStrategy, 2>> head_strategy_function() {
 // 放弃读取请求，需要维护 disk 和 object 的状态
 std::vector<int> give_up_16;
 std::vector<int> lst_give_up_16;
+double time_timeout, time_read, time_del, time_write, time_update;
 inline std::vector<int> timeout_read_requests_function() {
+    double st = 1.0 * std::clock() / CLOCKS_PER_SEC, ed;
     std::vector<int> timeout_read_requests;
     std::vector<int> finish_G(6);
     //{1, 64, 52, 42, 34, 28, 23, 19, 16};
@@ -724,15 +727,13 @@ inline std::vector<int> timeout_read_requests_function() {
         for (int i = 0; i < 3; i++) {
             Disk& disk = global::disks[object.disk_id[i]];
             int disk_used_time = 0x3f3f3f3f;
-            if (disk.slice_id[disk.head[0]] == disk.slice_id[object.block_id[i][1]]) {
-                disk_used_time = (*std::max_element(object.block_id[i].begin(), object.block_id[i].end()) - disk.head[0] + finish_G[object.size] - 1) / global::G;
+            if (disk.slice_id[disk.head[0]] == object.slice_id[i]) {
                 disk_used_time = 0;
-            } else if (disk.slice_id[disk.head[1]] == disk.slice_id[object.block_id[i][1]]) {
-                disk_used_time = (*std::max_element(object.block_id[i].begin(), object.block_id[i].end()) - disk.head[1] + finish_G[object.size] - 1) / global::G;
+            } else if (disk.slice_id[disk.head[1]] == object.slice_id[i]) {
                 disk_used_time = 0;
             } else {
-                disk_used_time = 1 + (finish_G[object.size] + global::G - 1 + *std::max_element(object.block_id[i].begin(), object.block_id[i].end()) -
-                                      disk.slice_start[disk.slice_id[object.block_id[i][1]]]) /
+                disk_used_time = 1 + (finish_G[object.size] + global::G - 1 + object.max_pos[i] -
+                                      disk.slice_start[object.slice_id[i]]) /
                                          global::G;
             }
             double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) / global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
@@ -747,6 +748,8 @@ inline std::vector<int> timeout_read_requests_function() {
             give_up_request(req_id);
         }
     }
+    ed = 1.0 * std::clock() / CLOCKS_PER_SEC;
+    time_timeout += ed - st;
     return timeout_read_requests;
 }
 
@@ -827,14 +830,20 @@ inline void run() {
         auto deleted_objects = io::delete_object_input();
         deleted_requests.clear();
         for (int object_id : deleted_objects) {
+            double del_st = 1.0 * std::clock() / CLOCKS_PER_SEC;
             delete_object(object_id);
+            double del_ed = 1.0 * std::clock() / CLOCKS_PER_SEC;
+            time_del += del_ed - del_st;
         }
         io::delete_object_output(deleted_requests);
 
         // 对象写入事件
         auto write_objects = io::write_object_input();
         // NOTE: 模拟写入的任务交给 write_strategy_function
+        double write_st = 1.0 * std::clock() / CLOCKS_PER_SEC;
         auto write_strategies = write_strategy_function(write_objects);
+        double write_ed = 1.0 * std::clock() / CLOCKS_PER_SEC;
+        time_write += write_ed - write_st;
         io::write_object_output(write_strategies);
 
         // 对象读取事件
@@ -888,7 +897,10 @@ inline void run() {
         }
         // NOTE: 模拟磁盘头动作的任务交给 head_strategy_function
         completed_requests.clear();
+        double read_st = 1.0 * std::clock() / CLOCKS_PER_SEC;
         auto head_strategies = head_strategy_function();
+        double read_ed = 1.0 * std::clock() / CLOCKS_PER_SEC;
+        time_read += read_ed - read_st;
         io::read_object_output(head_strategies, completed_requests);
         done_request_num += completed_requests.size();
         // 获取放弃/超时的读取请求
@@ -898,7 +910,10 @@ inline void run() {
         io::busy_requests_output(timeout_read_requests);
         // 一轮结束，更新磁盘的状态
         for (int i = 1; i <= global::N; ++i) {
+            double st = 1.0 * std::clock() / CLOCKS_PER_SEC;
             auto timeout_requests = global::disks[i].next_time();
+            double ed = 1.0 * std::clock() / CLOCKS_PER_SEC;
+            time_update += ed - st;
         }
         // 垃圾回收
         // TODO: 临时方案
@@ -915,10 +930,22 @@ inline void run() {
             io::garbage_collection_input();
             auto garbage_collection_strategies = garbage_collection_function();
             io::garbage_collection_output(garbage_collection_strategies);
+
+            // 维护 object 的 max_pos
+            for (auto& [obj_id, object] : global::objects) {
+                for (int i = 0; i < 3; i++) {
+                    object.max_pos[i] = *std::max_element(object.block_id[i].begin() + 1, object.block_id[i].end());
+                }
+            }
             // io::garbage_collection_output(std::vector<std::vector<std::pair<int, int>>>(global::N + 1));
         }
     }
     std::cerr << "final total busy:" << " " << busy_request_num << ",total done: " << done_request_num << '\n';
+    std::cerr << "total timeout time: " << time_timeout << '\n';
+    std::cerr << "total read time: " << time_read << '\n';
+    std::cerr << "total del time: " << time_del << '\n';
+    std::cerr << "total write time: " << time_write << '\n';
+    std::cerr << "total update time: " << time_update << '\n';
     std::cerr.flush();
 }
 }  // namespace baseline

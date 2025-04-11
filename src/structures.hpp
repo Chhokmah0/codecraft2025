@@ -35,7 +35,7 @@ constexpr auto generate_gain_mult() {
 constexpr auto generate_simluate_mult() {
     std::array<double, 120> SIMLUATE_MULT = {};
     for (size_t i = 0; i < SIMLUATE_MULT.size(); ++i) {
-        SIMLUATE_MULT[i] = i <= 10 ? 0.015 : 0.06;
+        SIMLUATE_MULT[i] = i <= 10 ? 0.02 : 0.08;
     }
     for (size_t i = 0; i < SIMLUATE_MULT.size(); ++i) {
         SIMLUATE_MULT[i] = (i == 0) ? 1 : SIMLUATE_MULT[i - 1] + SIMLUATE_MULT[i];
@@ -97,6 +97,7 @@ class Object {
     int disk_id[3];                                  // 三个副本的目标硬盘
     int slice_id[3];                                 // 三个副本的目标 slice
     std::vector<int> block_id[3];                    // 三个副本的每个块在目标硬盘上的块号，注意硬盘上的块号是从 1 开始编号的
+    int max_pos[3];                                  // 三个副本最远位置
     std::deque<ObjectReadTime> read_queue;           // 读取请求的队列，存储的是请求的编号和时间戳
     HashTable<int, ObjectReadStatus> read_requests;  // (req_id, ObjectReadRequest)
     std::vector<int> request_number;                 // 第 i 个分块上的未完成请求数量
@@ -111,6 +112,7 @@ class Object {
             disk_id[i] = strategy.disk_id[i];
             slice_id[i] = strategy.slice_id[i];
             block_id[i] = strategy.block_id[i];
+            max_pos[i] = *std::max_element(block_id[i].begin() + 1, block_id[i].end());
         }
         request_number.resize(size + 1);
     }
