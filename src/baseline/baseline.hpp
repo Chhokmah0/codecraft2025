@@ -873,7 +873,7 @@ inline void run() {
             int pos1 = disk_slice_gain_order[object.disk_id[0]][object.slice_id[0]],
                 pos2 = disk_slice_gain_order[object.disk_id[1]][object.slice_id[1]],
                 pos3 = disk_slice_gain_order[object.disk_id[2]][object.slice_id[2]];
-            if (opt > 0.02 && global::rng() % 100 > 1.0 / opt) {  // 这里分析数据来的.jpg
+            if (opt > 0.02 && global::rng() % 100 > 1.0 / opt && std::min({pos1, pos2, pos3}) > 2) {  // 这里分析数据来的.jpg
                 pre_busy.push_back(req_id);
                 flag = 0;
             }
