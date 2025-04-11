@@ -181,7 +181,8 @@ std::vector<std::vector<int>> select_balanced_groups(int num_disks, int max_appe
     return selected_groups;
 }
 
-std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice(int num_disks, int max_appearance, int target_groups) {
+std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice(int num_disks, int max_appearance,
+                                                                  int target_groups) {
     std::vector<std::vector<int>> balanced_groups = select_balanced_groups(num_disks, max_appearance, target_groups);
 
     // 统计每个硬盘的出现次数
@@ -206,7 +207,8 @@ std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice(int num_disks,
 
     std::vector<int> appearance(num_disks + 1, 0);  // 初始化为0
     std::vector<std::pair<int, int>> temp_disk_slice;
-    std::vector<std::vector<std::pair<int, int>>> grouped_disk_slice(balanced_groups.size());  // 用于存储分组后的disk slice
+    std::vector<std::vector<std::pair<int, int>>> grouped_disk_slice(
+        balanced_groups.size());  // 用于存储分组后的disk slice
 
     for (size_t i = 0; i < balanced_groups.size(); i++) {
         for (int disk_index = 0; disk_index < balanced_groups[i].size(); ++disk_index) {
@@ -260,7 +262,8 @@ inline void init_local() {
         group_disk_slice.push_back({temp_disk_slice[i], temp_disk_slice[i + 1], temp_disk_slice[i + 2]});
         tot_group++;
     }
-    group_disk_slice = chosen_disk_slice(global::N, global::disks[0].slice_num, global::N * global::disks[0].slice_num / 3);
+    group_disk_slice =
+        chosen_disk_slice(global::N, global::disks[0].slice_num, global::N * global::disks[0].slice_num / 3);
     tot_group = group_disk_slice.size();
     std::shuffle(group_disk_slice.begin(), group_disk_slice.end(), global::rng);
     //  最后一个 slice 的长度和前面不一样，需要单独处理
@@ -446,28 +449,68 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                 bool is_empty;
                 int tag_num;
                 int empty_block_num;
+                bool is_dominant;  // 是否是 tag 主导的 slice
+                // 所在的 disk 的相关信息
                 int empty_slice_num;
+                int tag_slice_num;
 
                 bool operator<(const GroupValue& other) const {
                     // 优先拥有 tag
                     if (has_tag != other.has_tag) {
                         return has_tag > other.has_tag;
                     }
-                    // 优先选择空闲 slice
-                    if (is_empty != other.is_empty) {
-                        return is_empty > other.is_empty;
-                    }
-                    // 优先选择 tag 数量少的 slice
-                    if (tag_num != other.tag_num) {
-                        return tag_num < other.tag_num;
-                    }
-                    // 优先选择空闲块数多的 slice
-                    if (empty_block_num != other.empty_block_num) {
-                        return empty_block_num > other.empty_block_num;
-                    }
-                    // 优先选择空闲 slice 多的 disk
-                    if (empty_slice_num != other.empty_slice_num) {
-                        return empty_slice_num > other.empty_slice_num;
+                    if (has_tag) {
+                        // 优先纯色的 slice
+                        if (tag_num != other.tag_num) {
+                            return tag_num < other.tag_num;
+                        }
+                        if (is_dominant) {
+                            // 优先空闲块数少的 slice（优先放满）
+                            if (empty_block_num != other.empty_block_num) {
+                                return empty_block_num < other.empty_block_num;
+                            }
+                        } else {
+                            // 优先 tag 数量少的 slice
+                            if (tag_num != other.tag_num) {
+                                return tag_num < other.tag_num;
+                            }
+                            // 优先空闲块数多的 slice
+                            if (empty_block_num != other.empty_block_num) {
+                                return empty_block_num > other.empty_block_num;
+                            }
+                            // 优先相同的 tag 较少的 disk（负载均衡）
+                            if(tag_slice_num != other.tag_slice_num) {
+                                return tag_slice_num < other.tag_slice_num;
+                            }
+                        }
+                    } else {
+                        // 优先空闲的 slice
+                        if (is_empty != other.is_empty) {
+                            return is_empty > other.is_empty;
+                        }
+                        if (is_empty) {
+                            // 优先相同的 tag 较少的 disk（负载均衡）
+                            if(tag_slice_num != other.tag_slice_num) {
+                                return tag_slice_num < other.tag_slice_num;
+                            }
+                            // 优先空闲 slice 数多的 disk
+                            if (empty_slice_num != other.empty_slice_num) {
+                                return empty_slice_num > other.empty_slice_num;
+                            }
+                        } else {
+                            // 优先 tag 数量少的 slice
+                            if (tag_num != other.tag_num) {
+                                return tag_num < other.tag_num;
+                            }
+                            // 优先空闲块数多的 slice
+                            if (empty_block_num != other.empty_block_num) {
+                                return empty_block_num > other.empty_block_num;
+                            }
+                            // 优先相同的 tag 较少的 disk（负载均衡）
+                            if(tag_slice_num != other.tag_slice_num) {
+                                return tag_slice_num < other.tag_slice_num;
+                            }
+                        }
                     }
                     return false;
                 }
@@ -495,12 +538,36 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                 min_empty_slice_num = std::min(min_empty_slice_num, empty_slice_num);
             }
 
-            return GroupValue{has_tag, is_empty, tag_num, empty_block_num, min_empty_slice_num};
+            // 由于三三分组，这里选择三个 slice 所在 disk 中拥有最多相同 tag 的 slice 数的硬盘作为参考
+            int max_tag_slice_num = 0;
+            for (int i = 0; i < 3; i++) {
+                int disk_id = group_disk_slice[group_id][i].first;
+                Disk& disk = global::disks[disk_id];
+                int tag_slice_num = 0;
+                for (int j = 1; j <= disk.slice_num; j++) {
+                    if (disk.slice_tag[j] & (1 << object.tag)) {
+                        tag_slice_num++;
+                    }
+                }
+                max_tag_slice_num = std::max(max_tag_slice_num, tag_slice_num);
+            }
+
+            bool is_dominant = true;
+            for (int i = 1; i <= global::M; i++) {
+                if (i == object.tag) continue;
+                if (disk.slice_tag_writed_num[slice_id][i] > disk.slice_tag_writed_num[slice_id][object.tag]) {
+                    is_dominant = false;
+                    break;
+                }
+            }
+
+            return GroupValue{has_tag,          is_empty, tag_num, empty_block_num, is_dominant, min_empty_slice_num,
+                              max_tag_slice_num};
         };
         auto slice_cmp = [&](const int& group_id1, const int& group_id2) {
             return group_key(group_id1) < group_key(group_id2);
         };
-        std::shuffle(group_ids.begin(), group_ids.end(), global::rng);
+        // std::shuffle(group_ids.begin(), group_ids.end(), global::rng);
         auto it = std::min_element(group_ids.begin(), group_ids.end(), slice_cmp);
         // 选出最优的 group_id
         auto group_id = *it;
@@ -759,7 +826,8 @@ inline std::vector<int> timeout_read_requests_function() {
                                       disk.slice_start[object.slice_id[i]]) /
                                          global::G;
             }
-            double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) / global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
+            double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) /
+                         global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
             if (opt > 0.01) disk_used_time = 105;
             used_time = std::min(used_time, disk_used_time);
         }
@@ -872,8 +940,10 @@ inline void run() {
         // 对象读取事件
         std::vector<int> pre_busy;  // 根据超时率扔掉一堆玩意
         auto read_objects = io::read_object_input();
-        std::vector<std::vector<double>> disk_slice_gain(global::N + 1, std::vector<double>(global::disks[0].slice_num + 1));
-        std::vector<std::vector<int>> disk_slice_gain_order(global::N + 1, std::vector<int>(global::disks[0].slice_num + 1));
+        std::vector<std::vector<double>> disk_slice_gain(global::N + 1,
+                                                         std::vector<double>(global::disks[0].slice_num + 1));
+        std::vector<std::vector<int>> disk_slice_gain_order(global::N + 1,
+                                                            std::vector<int>(global::disks[0].slice_num + 1));
         // 计算slice的gain,来给slice排序,方便丢request
         for (int i = 1; i <= global::N; ++i) {
             for (int j = 1; j <= global::disks[0].slice_num; ++j) {
@@ -901,11 +971,13 @@ inline void run() {
             Object& object = global::objects[object_id];
             bool flag = 1;
             // opt超时率
-            double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) / global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
+            double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) /
+                         global::fre_read[object.tag][(global::timestamp + 1799) / 1800];
             int pos1 = disk_slice_gain_order[object.disk_id[0]][object.slice_id[0]],
                 pos2 = disk_slice_gain_order[object.disk_id[1]][object.slice_id[1]],
                 pos3 = disk_slice_gain_order[object.disk_id[2]][object.slice_id[2]];
-            if (opt > 0.02 && global::rng() % 100 > 1.0 / opt && std::min({pos1, pos2, pos3}) > 2) {  // 这里分析数据来的.jpg
+            if (opt > 0.02 && global::rng() % 100 > 1.0 / opt &&
+                std::min({pos1, pos2, pos3}) > 2) {  // 这里分析数据来的.jpg
                 pre_busy.push_back(req_id);
                 flag = 0;
             }
@@ -945,7 +1017,9 @@ inline void run() {
                       << '\n';
 
             for (int i = 1; i <= global::M; ++i) {
-                std::cerr << "id " << i << " " << 1.0 * (give_up_16[i] - lst_give_up_16[i]) / global::fre_read[i][global::timestamp / 1800] << " ";
+                std::cerr << "id " << i << " "
+                          << 1.0 * (give_up_16[i] - lst_give_up_16[i]) / global::fre_read[i][global::timestamp / 1800]
+                          << " ";
             }
             std::cerr << "\n";
             std::cerr.flush();
