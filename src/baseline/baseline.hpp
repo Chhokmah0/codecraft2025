@@ -127,6 +127,29 @@ std::vector<std::vector<int>> select_balanced_groups(int num_disks, int max_appe
             all_triples.erase(all_triples.begin() + best_index);
         } else {
             // 如果没有找到合适的组合，强制选择一个
+            if (all_triples.empty()) {
+                std::cerr << "Warning: all_triples is empty, breaking loop." << std::endl;
+                break;  // 添加此行
+            }
+            bool found_valid = false;
+            for (size_t i = 0; i < all_triples.size(); ++i) {
+                const std::vector<int>& group = all_triples[i];
+                bool valid = true;
+                for (int disk : group) {
+                    if (disk_counts[disk] >= max_appearance) {
+                        valid = false;
+                        break;
+                    }
+                }
+                if (valid) {
+                    found_valid = true;
+                    break;
+                }
+            }
+            if (!found_valid) {
+                std::cerr << "Warning: No valid triples left, breaking loop." << std::endl;
+                break;
+            }
             for (size_t i = 0; i < all_triples.size(); ++i) {
                 const std::vector<int>& group = all_triples[i];
                 bool valid = true;
@@ -237,7 +260,7 @@ inline void init_local() {
         group_disk_slice.push_back({temp_disk_slice[i], temp_disk_slice[i + 1], temp_disk_slice[i + 2]});
         tot_group++;
     }
-    group_disk_slice = chosen_disk_slice(global::N, 16, 53);
+    group_disk_slice = chosen_disk_slice(global::N, global::disks[0].slice_num, global::N * global::disks[0].slice_num / 3);
     tot_group = group_disk_slice.size();
     std::shuffle(group_disk_slice.begin(), group_disk_slice.end(), global::rng);
     //  最后一个 slice 的长度和前面不一样，需要单独处理
@@ -716,11 +739,11 @@ inline std::vector<int> timeout_read_requests_function() {
     std::vector<int> finish_G(6);
     //{1, 64, 52, 42, 34, 28, 23, 19, 16};
     finish_G[0] = 0;
-    finish_G[1] = 16;
-    finish_G[2] = 16 + finish_G[1];
-    finish_G[3] = 16 + finish_G[2];
-    finish_G[4] = 16 + finish_G[3];
-    finish_G[5] = 16 + finish_G[4];
+    finish_G[1] = 23;
+    finish_G[2] = 23 + finish_G[1];
+    finish_G[3] = 23 + finish_G[2];
+    finish_G[4] = 23 + finish_G[3];
+    finish_G[5] = 23 + finish_G[4];
     for (auto& [obj_id, object] : global::objects) {
         int predict_time = 105;      // 需要被丢掉的预测时间
         int used_time = 0x3f3f3f3f;  // 读取该物品所需要的最小时间
