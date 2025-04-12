@@ -632,6 +632,7 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
     std::vector<std::array<int, COST_SIZE>> pre_read_count;
     // dp.clear();
     // pre_read_count.clear();
+    int true_G = global::G + global::g[(global::timestamp - 1) / 1800 + 1];
     for (int i = 0, p = disk.head[head_id]; i <= global::V; i++) {
         dp.push_back(std::array<int, COST_SIZE>());
         dp.back().fill(-1);
@@ -649,15 +650,15 @@ inline HeadStrategy simulate_strategy(int disk_id, int head_id) {
             }
             if (disk.request_num[p] == 0) {
                 // 磁头在空闲块上时才可以 PASS
-                dp[0][0] = global::G - 1;
+                dp[0][0] = true_G - 1;
                 pre_read_count[0][0] = read_count;
             }
             // READ 操作
             if (read_count == COST_SIZE - 1) {
-                dp[0][read_count] = global::G - COST[read_count];
+                dp[0][read_count] = true_G - COST[read_count];
                 pre_read_count[0][read_count] = read_count;
             } else {
-                dp[0][read_count + 1] = global::G - COST[read_count + 1];
+                dp[0][read_count + 1] = true_G - COST[read_count + 1];
                 pre_read_count[0][read_count + 1] = read_count;
             }
             p = mod(p, 1, global::V, 1);
@@ -809,6 +810,7 @@ inline std::vector<int> timeout_read_requests_function() {
     finish_G[3] = 23 + finish_G[2];
     finish_G[4] = 23 + finish_G[3];
     finish_G[5] = 23 + finish_G[4];
+    int true_G = global::G + global::g[(global::timestamp - 1) / 1800 + 1];
     for (auto& [obj_id, object] : global::objects) {
         int predict_time = 105;      // 需要被丢掉的预测时间
         int used_time = 0x3f3f3f3f;  // 读取该物品所需要的最小时间
@@ -820,9 +822,9 @@ inline std::vector<int> timeout_read_requests_function() {
             } else if (disk.slice_id[disk.head[1]] == object.slice_id[i]) {
                 disk_used_time = 0;
             } else {
-                disk_used_time = 1 + (finish_G[object.size] + global::G - 1 + object.max_pos[i] -
+                disk_used_time = 1 + (finish_G[object.size] + true_G - 1 + object.max_pos[i] -
                                       disk.slice_start[object.slice_id[i]]) /
-                                         global::G;
+                                      true_G;
             }
             double opt = 1.0 * (give_up_16[object.tag] - lst_give_up_16[object.tag]) /
                          global::fre_read[object.tag][(global::timestamp + 1799) / 1800];

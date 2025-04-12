@@ -19,6 +19,7 @@ inline std::mt19937_64 rng(0);  // 全局随机器
 // fre_xxx[i][j] 表示相应时间片内对象标签为 i 的读取、写入、删除操作的对象大小之和。
 // i 和 j 从 1 开始编号
 inline std::vector<std::vector<int>> fre_del, fre_write, fre_read;
+inline std::vector<int> g;
 inline int fre_len;
 
 inline int timestamp;                          // 全局时间戳

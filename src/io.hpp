@@ -33,6 +33,10 @@ inline void init_input() {
             std::cin >> global::fre_read[i][j];
         }
     }
+    global::g.resize((global::T + 105 - 1) / 1800 + 1 + 1);
+    for(int i = 1; i <= (global::T + 105 - 1) / 1800 + 1; i++) {
+        std::cin >> global::g[i];
+    }
 }
 
 inline void init_output() {
