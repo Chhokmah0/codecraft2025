@@ -342,8 +342,8 @@ class Disk {
           head{1, 1},
           pre_action{HeadActionType::JUMP, HeadActionType::JUMP},
           pre_action_cost{0, 0},
-          slice_size((v + _slice_num - 1) / _slice_num),
-          slice_num((v + slice_size - 1) / slice_size),
+          slice_size(v / _slice_num),
+          slice_num(_slice_num),
           slice_id(v + 1),
           slice_start(slice_num + 1),
           slice_end(slice_num + 1),
@@ -358,6 +358,10 @@ class Disk {
           empty_ranges(v) {
         for (int i = 1; i <= v; i++) {
             slice_id[i] = (i - 1) / slice_size + 1;
+            if (slice_id[i] > slice_num) {
+                slice_id[i] = slice_num;
+                continue;
+            }
             if (slice_start[slice_id[i]] == 0) {
                 slice_start[slice_id[i]] = i;
             }

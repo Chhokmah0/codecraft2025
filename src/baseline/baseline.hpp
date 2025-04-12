@@ -249,9 +249,9 @@ std::vector<std::array<std::pair<int, int>, 3>> chosen_disk_slice(int num_disks,
 inline void init_local() {
     for (int i = 0; i <= global::N; i++) {
         global::disks.push_back(Disk(i, global::V, global::M, 16));
-    }
-    // 三三分组
-    std::vector<std::pair<int, int>> temp_disk_slice;
+    }  // 三三分组
+    std::vector<std::pair<int, int>>
+        temp_disk_slice;
     for (int j = 1; j <= global::disks[0].slice_num; j++) {
         for (int i = 1; i <= global::N; i++) {
             temp_disk_slice.push_back({i, j});
@@ -436,7 +436,6 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                 group_ids.push_back(i);
             }
         }
-
         if (group_ids.empty()) {
             // 应该不会出现这种情况
             throw std::runtime_error("No disk can be used.");
@@ -479,7 +478,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                                 return empty_block_num > other.empty_block_num;
                             }
                             // 优先相同的 tag 较少的 disk（负载均衡）
-                            if(tag_slice_num != other.tag_slice_num) {
+                            if (tag_slice_num != other.tag_slice_num) {
                                 return tag_slice_num < other.tag_slice_num;
                             }
                         }
@@ -490,7 +489,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                         }
                         if (is_empty) {
                             // 优先相同的 tag 较少的 disk（负载均衡）
-                            if(tag_slice_num != other.tag_slice_num) {
+                            if (tag_slice_num != other.tag_slice_num) {
                                 return tag_slice_num < other.tag_slice_num;
                             }
                             // 优先空闲 slice 数多的 disk
@@ -507,7 +506,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                                 return empty_block_num > other.empty_block_num;
                             }
                             // 优先相同的 tag 较少的 disk（负载均衡）
-                            if(tag_slice_num != other.tag_slice_num) {
+                            if (tag_slice_num != other.tag_slice_num) {
                                 return tag_slice_num < other.tag_slice_num;
                             }
                         }
@@ -561,7 +560,7 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
                 }
             }
 
-            return GroupValue{has_tag,          is_empty, tag_num, empty_block_num, is_dominant, min_empty_slice_num,
+            return GroupValue{has_tag, is_empty, tag_num, empty_block_num, is_dominant, min_empty_slice_num,
                               max_tag_slice_num};
         };
         auto slice_cmp = [&](const int& group_id1, const int& group_id2) {
@@ -571,7 +570,6 @@ inline std::vector<ObjectWriteStrategy> write_strategy_function(const std::vecto
         auto it = std::min_element(group_ids.begin(), group_ids.end(), slice_cmp);
         // 选出最优的 group_id
         auto group_id = *it;
-
         // 选好了硬盘和 slice，开始放置
         for (int i = 0; i < 3; i++) {
             int disk_id = group_disk_slice[group_id][i].first;
@@ -901,6 +899,7 @@ inline std::vector<std::vector<std::pair<int, int>>> garbage_collection_function
 }
 // ---------------交互----------------
 // 应该是不需要修改
+std::map<std::pair<int, int>, bool> should_throw;
 inline void run() {
     io::init_input();
     init_local();
@@ -981,6 +980,10 @@ inline void run() {
                 pre_busy.push_back(req_id);
                 flag = 0;
             }
+            /*if (should_throw[{object.tag, (global::timestamp + 1799) / 1800}] == 1) {
+                pre_busy.push_back(req_id);
+                flag = 0;
+            }*/
             if (flag) {
                 object.add_request(req_id, global::timestamp);
                 for (int i = 0; i < 3; i++) {
@@ -1020,6 +1023,9 @@ inline void run() {
                 std::cerr << "id " << i << " "
                           << 1.0 * (give_up_16[i] - lst_give_up_16[i]) / global::fre_read[i][global::timestamp / 1800]
                           << " ";
+                if (1.0 * (give_up_16[i] - lst_give_up_16[i]) / global::fre_read[i][global::timestamp / 1800] >= 0.1) {
+                    should_throw[{i, global::timestamp / 1800}] = 1;
+                }
             }
             std::cerr << "\n";
             std::cerr.flush();
@@ -1044,5 +1050,9 @@ inline void run() {
     std::cerr << "total write time: " << time_write << '\n';
     std::cerr << "total update time: " << time_update << '\n';
     std::cerr.flush();
+    /*for (auto [x, w] : should_throw) {
+        std::cerr << "should_throw[{" << x.first << ", " << x.second << "}] = " << w << ";\n";
+    }
+    std::cerr.flush();*/
 }
 }  // namespace baseline
