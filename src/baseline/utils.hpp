@@ -18,23 +18,96 @@ inline int mod(int p, int l, int r, int step) {
     return (p - l + step % len + len) % len + l;
 }
 
+inline int move_head(int disk_id, int slice_id, int p, int step) {
+    return mod(p, global::disks[disk_id].slice_start[slice_id], global::disks[disk_id].slice_end[slice_id], step);
+}
+
 inline std::vector<int> deleted_requests;
 inline std::vector<int> completed_requests;
 
+inline void clean_gain_after_head(Disk& disk, int head) {
+    for (int pos = head; pos <= disk.slice_end[disk.slice_id[head]]; pos++) {
+        ObjectBlock& block = disk.blocks[pos];
+        if (block.object_id == 0 || disk.request_num[pos] == 0) continue;
+        Object& object = global::objects[block.object_id];
+        // 如果该 object 在这个硬盘上的所有 block 都在 after_head 往后，清除（包揽）这个物品的查询贡献
+        bool should_clean_object = true;
+        int copy_id = disk.get_copy_id(object);
+        for (int i = 1; i <= object.size; i++) {
+            if (object.block_id[copy_id][i] < head) {
+                should_clean_object = false;
+                break;
+            }
+        }
+        if (!should_clean_object) continue;
+        // 清理 gain
+        for (int i = 0; i < 3; i++) {
+            Disk& disk = global::disks[object.disk_id[i]];
+            disk.clean_object_gain(object);
+        }
+        object.clean_gain();
+    }
+}
+
+inline void give_up_request(int req_id) {
+    assert(global::request_object_id.find(req_id) != global::request_object_id.end());
+    int object_id = global::request_object_id[req_id];
+    Object& object = global::objects[object_id];
+    // 维护磁盘的状态
+    for (int i = 0; i < 3; i++) {
+        Disk& disk = global::disks[object.disk_id[i]];
+        disk.erase_request(object, req_id);
+    }
+    // 维护对象的状态
+    object.erase_request(req_id);
+    // 维护全局的状态
+    global::request_object_id.erase(req_id);
+}
+
+inline void swap_block(Disk& disk, int block_id1, int block_id2) {
+    // 维护 object 的状态
+    if (disk.blocks[block_id1].object_id != 0) {
+        Object& object = global::objects[disk.blocks[block_id1].object_id];
+        int copy_id = disk.get_copy_id(object);
+        object.block_id[copy_id][disk.blocks[block_id1].object_block_index] = block_id2;
+    }
+    if (disk.blocks[block_id2].object_id != 0) {
+        Object& object = global::objects[disk.blocks[block_id2].object_id];
+        int copy_id = disk.get_copy_id(object);
+        object.block_id[copy_id][disk.blocks[block_id2].object_block_index] = block_id1;
+    }
+
+    // 维护 disk 的状态
+    std::swap(disk.blocks[block_id1], disk.blocks[block_id2]);
+    std::swap(disk.request_num[block_id1], disk.request_num[block_id2]);
+    if ((disk.blocks[block_id1].object_id == 0) != (disk.blocks[block_id2].object_id == 0)) {
+        // 交换了一个空块和一个非空块
+        if (disk.blocks[block_id1].object_id != 0) {
+            disk.empty_ranges.erase(block_id1);
+            disk.empty_ranges.write(block_id2);
+        } else {
+            disk.empty_ranges.erase(block_id2);
+            disk.empty_ranges.write(block_id1);
+        }
+    }
+}
+inline void swap_block(int disk_id, int block_id1, int block_id2) {
+    swap_block(global::disks[disk_id], block_id1, block_id2);
+}
+
 inline void delete_object(int object_id) {
-    assert(global::objects.count(object_id));
+    assert(global::objects.find(object_id) != global::objects.end());
 
     // 清理硬盘上的数据
     Object& object = global::objects[object_id];
     for (int i = 0; i < 3; i++) {
         Disk& disk = global::disks[object.disk_id[i]];
-        for (int j = 1; j <= object.size; j++) {
-            disk.erase(object.block_id[i][j]);
-        }
+        disk.erase(object);
     }
 
     std::vector<int> temp_deleted_requests;
-    for (const auto& [req_id, request] : object.get_read_status()) {
+    for (const auto& [req_id, request] : object.read_requests) {
+        global::request_object_id.erase(req_id);
         temp_deleted_requests.push_back(req_id);
     }
     deleted_requests.insert(deleted_requests.end(), temp_deleted_requests.begin(), temp_deleted_requests.end());
@@ -43,38 +116,35 @@ inline void delete_object(int object_id) {
 }
 
 inline void write_object(const ObjectWriteStrategy& strategy) {
+    global::objects[strategy.object.id] = Object(strategy);
     for (int i = 0; i < 3; i++) {
         Disk& disk = global::disks[strategy.disk_id[i]];
-        for (int j = 1; j <= strategy.object.size; j++) {
-            disk.write(strategy.block_id[i][j],
-                       ObjectBlock{strategy.object.id, strategy.object.size, strategy.object.tag, j});
-        }
+        disk.write(global::objects[strategy.object.id]);
     }
-
-    global::objects[strategy.object.id] = Object(strategy);
 }
 
 // 模拟单个磁头的动作
-inline void simulate_head(Disk& disk, const HeadStrategy& strategy) {
+inline void simulate_head(Disk& disk, int head_id, const HeadStrategy& strategy) {
     for (const auto& action : strategy.actions) {
         switch (action.type) {
             case HeadActionType::JUMP: {
-                disk.pre_action = HeadActionType::JUMP;
-                disk.pre_action_cost = global::G;
-                disk.head = action.target;
+                disk.pre_action[head_id] = HeadActionType::JUMP;
+                disk.pre_action_cost[head_id] = global::G;
+                disk.head[head_id] = action.target;
                 break;
             }
             case HeadActionType::READ: {
-                auto cost =
-                    disk.pre_action != HeadActionType::READ ? 64 : std::max(16, (disk.pre_action_cost * 4 + 4) / 5);
-                disk.pre_action = HeadActionType::READ;
-                disk.pre_action_cost = cost;
+                auto cost = disk.pre_action[head_id] != HeadActionType::READ
+                                ? 64
+                                : std::max(16, (disk.pre_action_cost[head_id] * 4 + 4) / 5);
+                disk.pre_action[head_id] = HeadActionType::READ;
+                disk.pre_action_cost[head_id] = cost;
 
                 // NOTE: 模拟读取操作的方法，同时维护对象和磁盘的状态
-                ObjectBlock& block = disk.blocks[disk.head];
+                ObjectBlock& block = disk.blocks[disk.head[head_id]];
                 if (block.object_id == 0) {
                     // 读取了一个空块，该操作也是合法的，但是需要特殊处理
-                    disk.head = disk.head % global::V + 1;
+                    disk.head[head_id] = disk.head[head_id] % global::V + 1;
                     break;
                 }
                 Object& object = global::objects[block.object_id];
@@ -85,14 +155,20 @@ inline void simulate_head(Disk& disk, const HeadStrategy& strategy) {
                     Disk& t_disk = global::disks[object.disk_id[i]];
                     t_disk.read(object.block_id[i][block.object_block_index]);
                 }
-
-                disk.head = disk.head % global::V + 1;
+                for (int request_id : temp_completed_requests) {
+                    for (int i = 0; i < 3; i++) {
+                        Disk& t_disk = global::disks[object.disk_id[i]];
+                        t_disk.erase_request(object, request_id);
+                    }
+                    object.erase_request(request_id);
+                }
+                disk.head[head_id] = mod(disk.head[head_id], 1, global::V, 1);
                 break;
             }
             case HeadActionType::PASS: {
-                disk.pre_action = HeadActionType::PASS;
-                disk.pre_action_cost = 1;
-                disk.head = disk.head % global::V + 1;
+                disk.pre_action[head_id] = HeadActionType::PASS;
+                disk.pre_action_cost[head_id] = 1;
+                disk.head[head_id] = mod(disk.head[head_id], 1, global::V, 1);
                 break;
             }
         }
